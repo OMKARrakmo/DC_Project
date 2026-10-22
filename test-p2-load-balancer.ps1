@@ -94,6 +94,9 @@ if ($n1_rr -eq 4 -and $n2_rr -eq 4 -and $n3_rr -eq 4) {
     $failed = $true
 }
 
+# Allow cluster connections to settle and heartbeats to sync
+Start-Sleep -Seconds 3
+
 # TEST 2: Least Connections spreads overlapping requests (12 requests, 300ms delay)
 Write-Host "`n--- [TEST 2] Testing Least Connections Strategy with Overlap (12 requests, 300ms delay) ---" -ForegroundColor Yellow
 $bodyLC = @{

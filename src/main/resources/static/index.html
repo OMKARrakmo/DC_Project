@@ -34,8 +34,8 @@
     <button class="tab-btn" data-tab="tab-exp2">Exp 2: Multithreading</button>
     <button class="tab-btn" data-tab="tab-exp3">Exp 3: Clocks</button>
     <button class="tab-btn" data-tab="tab-exp7">Exp 7: MapReduce</button>
-    <button class="tab-btn disabled" title="Unlocks in Phase 5">Exp 9: MPI Collectives (P5)</button>
-    <button class="tab-btn disabled" title="Unlocks in Phase 5">Exp 10: Matrix Mult (P5)</button>
+    <button class="tab-btn" data-tab="tab-exp9">Exp 9: MPI Collectives</button>
+    <button class="tab-btn" data-tab="tab-exp10">Exp 10: Matrix Mult</button>
   </nav>
 
   <!-- MAIN BODY -->
@@ -300,21 +300,38 @@
           <div class="card" style="margin: 0; background: #0f172a; border-color: rgba(255,255,255,0.06);">
             <h3 style="font-size: 0.9rem; color: var(--accent-blue);">Current Election Status</h3>
             <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.5rem; font-size: 0.85rem;">
-              <div><strong>Algorithm:</strong> <span class="badge badge-primary">BULLY</span></div>
+              <div><strong>Active Algorithm:</strong> <span class="badge badge-primary" id="election-active-algo-badge">BULLY</span></div>
               <div><strong>Current Primary (Coordinator):</strong> <span class="badge badge-green" id="election-coord-badge">Node ?</span></div>
               <div><strong>Local Node ID:</strong> <span class="badge" id="election-local-badge">Node ?</span></div>
               <div><strong>Role:</strong> <span id="election-role-text">Checking...</span></div>
             </div>
+
+            <!-- Algorithm Selector -->
+            <div style="margin-top: 0.75rem; padding-top: 0.5rem; border-top: 1px solid rgba(255,255,255,0.08);">
+              <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.35rem;">Select Algorithm:</label>
+              <div style="display: flex; gap: 1.25rem; align-items: center;">
+                <label style="display: flex; align-items: center; gap: 0.35rem; cursor: pointer; font-size: 0.85rem;">
+                  <input type="radio" name="election-algo-radio" value="BULLY" checked>
+                  <span>Bully</span>
+                </label>
+                <label style="display: flex; align-items: center; gap: 0.35rem; cursor: pointer; font-size: 0.85rem;">
+                  <input type="radio" name="election-algo-radio" value="RING">
+                  <span>Ring</span>
+                </label>
+              </div>
+            </div>
           </div>
 
           <div class="card" style="margin: 0; background: #0f172a; border-color: rgba(255,255,255,0.06);">
-            <h3 style="font-size: 0.9rem; color: var(--accent-blue);">How Bully Election Works</h3>
-            <ol style="margin-left: 1.25rem; font-size: 0.8rem; color: var(--text-muted); display: flex; flex-direction: column; gap: 0.35rem; margin-top: 0.5rem;">
-              <li>Node P contacts all known nodes with higher IDs (<code style="color:var(--accent-amber)">electionMsg</code>).</li>
-              <li>If no higher node answers, P wins, becomes Primary, and broadcasts <code style="color:var(--accent-green)">coordinatorMsg</code> to all peers.</li>
-              <li>If a higher node Q answers <code style="color:var(--accent-blue)">OK</code>, Q starts its own election and P waits for announcement.</li>
-              <li>Highest active node ID in cluster is always the elected Primary coordinator.</li>
-            </ol>
+            <h3 style="font-size: 0.9rem; color: var(--accent-blue);">Algorithm Mechanics</h3>
+            <div style="font-size: 0.8rem; color: var(--text-muted); display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.5rem;">
+              <div>
+                <strong style="color:var(--text-main);">Bully Algorithm:</strong> Node contacts all higher active IDs (<code style="color:var(--accent-amber)">electionMsg</code>). If no higher node answers OK, it becomes Coordinator and broadcasts <code style="color:var(--accent-green)">coordinatorMsg</code>.
+              </div>
+              <div>
+                <strong style="color:var(--text-main);">Ring Algorithm:</strong> An election token circulates the logical ring of live nodes in circular order collecting active node IDs. When the token returns to the initiator, the node with the highest ID wins and is declared Coordinator.
+              </div>
+            </div>
           </div>
         </div>
 
@@ -773,6 +790,171 @@
       </div>
     </section>
 
+    <!-- EXP 9: MPI COLLECTIVES TAB -->
+    <section id="tab-exp9" class="tab-pane">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div style="display:flex; align-items:center; gap:0.5rem;">
+              <h2 class="card-title">MPI Collectives: Broadcast, Scatter &amp; Gather (Exp 9)</h2>
+              <span class="badge badge-amber" style="background:rgba(245, 158, 11, 0.2); color:#f59e0b; border:1px solid #f59e0b;">SIMULATED (not MPI)</span>
+            </div>
+            <div class="card-desc">Simulated in-JVM MPI collective operations over non-isolated donation records with Primary SQL verification</div>
+          </div>
+          <div style="display:flex; align-items:center; gap:0.5rem;">
+            <label for="select-mpi-ranks" style="font-size:0.8rem; color:var(--text-muted);">Simulated Ranks:</label>
+            <select id="select-mpi-ranks" style="padding:0.3rem 0.5rem; font-size:0.85rem;">
+              <option value="1">1 Rank</option>
+              <option value="2">2 Ranks</option>
+              <option value="4" selected>4 Ranks</option>
+              <option value="8">8 Ranks</option>
+            </select>
+            <button class="btn-primary" id="btn-run-mpi-collectives">Execute MPI Collectives</button>
+          </div>
+        </div>
+
+        <!-- Verification Banner -->
+        <div id="mpi-verification-banner" style="display: none; padding: 0.75rem 1rem; border-radius: 4px; font-size: 0.9rem;">
+          <!-- Rendered via JS -->
+        </div>
+
+        <!-- 3 Phase Workflow Cards -->
+        <div class="grid-3" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0.75rem; margin-top: 0.75rem;">
+          <!-- Broadcast Card -->
+          <div class="card" style="margin:0; background:#0f172a;">
+            <h3 style="font-size:0.85rem; color:var(--accent-blue);">1. Broadcast Phase (Rank 0)</h3>
+            <div style="font-size:0.8rem; color:var(--text-muted); margin-top:0.4rem; display:flex; flex-direction:column; gap:0.3rem;">
+              <div>&bull; Target Branches: <code>[Mumbai, Pune, Chennai]</code></div>
+              <div>&bull; Minimum Amount: <code>₹100.00</code></div>
+              <div style="color:var(--text-muted); font-size:0.75rem; margin-top:0.25rem;">
+                Rank 0 broadcasts configuration object to all simulated worker ranks.
+              </div>
+            </div>
+          </div>
+
+          <!-- Scatter Card -->
+          <div class="card" style="margin:0; background:#0f172a;">
+            <h3 style="font-size:0.85rem; color:var(--accent-amber);">2. Scatter Phase</h3>
+            <div id="mpi-scatter-info" style="font-size:0.8rem; color:var(--text-muted); margin-top:0.4rem; display:flex; flex-direction:column; gap:0.3rem;">
+              <div>Rank 0 scatters qualifying non-isolated donations across ranks.</div>
+            </div>
+          </div>
+
+          <!-- Gather Card -->
+          <div class="card" style="margin:0; background:#0f172a;">
+            <h3 style="font-size:0.85rem; color:var(--accent-green);">3. Gather Phase</h3>
+            <div id="mpi-gather-info" style="font-size:0.8rem; color:var(--text-muted); margin-top:0.4rem; display:flex; flex-direction:column; gap:0.3rem;">
+              <div>Rank 0 gathers partial branch totals from all ranks and sums them.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Rank Computation & Verification Table -->
+        <div class="grid-2" style="margin-top:0.75rem;">
+          <div class="card" style="margin:0; background:#0f172a;">
+            <h3 style="font-size:0.9rem; color:var(--accent-blue);">Per-Rank Partial Branch Totals</h3>
+            <table class="data-table" id="mpi-rank-partials-table" style="margin-top:0.5rem;">
+              <thead>
+                <tr>
+                  <th>Rank #</th>
+                  <th>Scattered Records</th>
+                  <th>Mumbai (₹)</th>
+                  <th>Pune (₹)</th>
+                  <th>Chennai (₹)</th>
+                </tr>
+              </thead>
+              <tbody id="mpi-rank-partials-tbody">
+                <tr><td colspan="5" style="text-align:center;">Execute collective job to see per-rank computation.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="card" style="margin:0; background:#0f172a;">
+            <h3 style="font-size:0.9rem; color:var(--accent-blue);">Gathered Totals vs Primary SQL SUM</h3>
+            <table class="data-table" id="mpi-gathered-table" style="margin-top:0.5rem;">
+              <thead>
+                <tr>
+                  <th>Branch</th>
+                  <th>Gathered Total</th>
+                  <th>Primary SQL SUM</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="mpi-gathered-tbody">
+                <tr><td colspan="4" style="text-align:center;">Execute job to verify against SQL SUM.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- EXP 10: MATRIX MULTIPLICATION TAB -->
+    <section id="tab-exp10" class="tab-pane">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div style="display:flex; align-items:center; gap:0.5rem;">
+              <h2 class="card-title">Parallel Matrix Multiplication with MPI (Exp 10)</h2>
+              <span class="badge badge-amber" style="background:rgba(245, 158, 11, 0.2); color:#f59e0b; border:1px solid #f59e0b;">SIMULATED (not MPI)</span>
+            </div>
+            <div class="card-desc">Rank 0 broadcasts B, scatters row-blocks of A, ranks multiply, Gather assembles C</div>
+          </div>
+          <div style="display:flex; align-items:center; gap:0.5rem;">
+            <label for="select-matrix-size" style="font-size:0.8rem; color:var(--text-muted);">Size (N&times;N):</label>
+            <select id="select-matrix-size" style="padding:0.3rem 0.5rem; font-size:0.85rem;">
+              <option value="100">100 &times; 100</option>
+              <option value="200" selected>200 &times; 200</option>
+              <option value="400">400 &times; 400</option>
+            </select>
+            <label for="select-matrix-ranks" style="font-size:0.8rem; color:var(--text-muted);">Ranks:</label>
+            <select id="select-matrix-ranks" style="padding:0.3rem 0.5rem; font-size:0.85rem;">
+              <option value="1">1 Rank</option>
+              <option value="2">2 Ranks</option>
+              <option value="4" selected>4 Ranks</option>
+            </select>
+            <button class="btn-primary" id="btn-run-matrix-mult">Run Parallel Matrix Mult</button>
+          </div>
+        </div>
+
+        <div class="alert-box" style="font-size:0.85rem;">
+          <strong>DMS Application Context:</strong> Matrix <code>A</code> (Donors &times; Campaigns) &times; Matrix <code>B</code> (Campaigns &times; Impact Weights) = Matrix <code>C</code> (Donor Impact Report).
+        </div>
+
+        <!-- Verification Banner -->
+        <div id="matrix-verification-banner" style="display: none; padding: 0.75rem 1rem; border-radius: 4px; font-size: 0.9rem; margin-top:0.5rem;">
+          <!-- Rendered via JS -->
+        </div>
+
+        <!-- Performance & Speedup Table -->
+        <div class="grid-2" style="margin-top:0.75rem;">
+          <div class="card" style="margin:0; background:#0f172a;">
+            <h3 style="font-size:0.9rem; color:var(--accent-blue);">Performance &amp; Speedup Metrics</h3>
+            <table class="data-table" id="matrix-metrics-table" style="margin-top:0.5rem;">
+              <tbody>
+                <tr><td>Matrix Dimensions</td><td id="metric-matrix-size">N/A</td></tr>
+                <tr><td>Simulated Ranks</td><td id="metric-matrix-ranks">N/A</td></tr>
+                <tr><td>Sequential Execution Time</td><td id="metric-seq-time" style="color:var(--accent-amber);">N/A</td></tr>
+                <tr><td>Parallel Execution Time</td><td id="metric-par-time" style="color:var(--accent-green);">N/A</td></tr>
+                <tr><td>Speedup Factor (S = Tseq / Tpar)</td><td id="metric-speedup" style="font-weight:700; color:var(--accent-blue);">N/A</td></tr>
+                <tr><td>Efficiency (E = S / Ranks)</td><td id="metric-efficiency">N/A</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="card" style="margin:0; background:#0f172a;">
+            <h3 style="font-size:0.9rem; color:var(--accent-blue);">Matrix C Result Slice (4&times;4 Corner)</h3>
+            <div id="matrix-sample-container" style="font-family:var(--font-mono); font-size:0.8rem; margin-top:0.5rem; background:#030712; padding:0.75rem; border-radius:4px; border:1px solid var(--border-color);">
+              Run computation to display matrix result slice.
+            </div>
+            <div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.5rem;">
+              Verified against single-threaded sequential calculation: Max element absolute difference = <span id="metric-max-diff">0.0</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- LIVE EVENT LOG (VISIBLE ON ALL TABS) -->
     <section class="event-log-container">
       <div class="log-header">
@@ -791,6 +973,8 @@
             <option value="EXP6-LB">EXP6-LB</option>
             <option value="EXP7-MR">EXP7-MR</option>
             <option value="EXP8-FT">EXP8-FT</option>
+            <option value="EXP9-MPI">EXP9-MPI</option>
+            <option value="EXP10-MPI">EXP10-MPI</option>
           </select>
           <label style="font-size:0.75rem; display:flex; align-items:center; gap:0.25rem;">
             <input type="checkbox" id="log-autoscroll" checked> Auto-scroll

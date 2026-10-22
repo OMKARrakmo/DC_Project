@@ -23,10 +23,13 @@ public class ApiController {
     private final DonationRepository donationRepository;
     private final com.dms.lb.LoadBalancingService loadBalancingService;
     private final com.dms.election.BullyElection bullyElection;
+    private final com.dms.election.ElectionManager electionManager;
     private final com.dms.repl.ReplicationService replicationService;
     private final ThreadPoolService threadPoolService;
     private final ClockSyncService clockSyncService;
     private final com.dms.mr.MapReduceService mapReduceService;
+    private final com.dms.mpi.MpiCollectivesService mpiCollectivesService;
+    private final com.dms.mpi.MpiMatrixMultiplicationService mpiMatrixMultiplicationService;
 
     public ApiController(NodeConfig nodeConfig,
                          NodeRegistry nodeRegistry,
@@ -36,10 +39,13 @@ public class ApiController {
                          DonationRepository donationRepository,
                          com.dms.lb.LoadBalancingService loadBalancingService,
                          @org.springframework.context.annotation.Lazy com.dms.election.BullyElection bullyElection,
+                         @org.springframework.context.annotation.Lazy com.dms.election.ElectionManager electionManager,
                          com.dms.repl.ReplicationService replicationService,
                          ThreadPoolService threadPoolService,
                          ClockSyncService clockSyncService,
-                         com.dms.mr.MapReduceService mapReduceService) {
+                         com.dms.mr.MapReduceService mapReduceService,
+                         com.dms.mpi.MpiCollectivesService mpiCollectivesService,
+                         com.dms.mpi.MpiMatrixMultiplicationService mpiMatrixMultiplicationService) {
         this.nodeConfig = nodeConfig;
         this.nodeRegistry = nodeRegistry;
         this.lamportClock = lamportClock;
@@ -48,10 +54,13 @@ public class ApiController {
         this.donationRepository = donationRepository;
         this.loadBalancingService = loadBalancingService;
         this.bullyElection = bullyElection;
+        this.electionManager = electionManager;
         this.replicationService = replicationService;
         this.threadPoolService = threadPoolService;
         this.clockSyncService = clockSyncService;
         this.mapReduceService = mapReduceService;
+        this.mpiCollectivesService = mpiCollectivesService;
+        this.mpiMatrixMultiplicationService = mpiMatrixMultiplicationService;
     }
 
     @PostMapping("/donate")
@@ -59,14 +68,17 @@ public class ApiController {
         long currentClock = lamportClock.tick();
         request.setClientLamportTs(currentClock);
 
-        Integer targetId = request.getTargetNodeId();
-
-        // If target is not specified, use load balancer to select node
-        if (targetId == null || targetId <= 0) {
-            targetId = loadBalancingService.chooseNode();
+        com.dms.lb.LoadBalancingService.InFlightHandle inFlight;
+        int targetId;
+        if (request.getTargetNodeId() != null && request.getTargetNodeId() > 0) {
+            targetId = request.getTargetNodeId();
+            inFlight = loadBalancingService.trackInFlight(targetId);
+        } else {
+            inFlight = loadBalancingService.chooseAndTrackNode();
+            targetId = inFlight.getNodeId();
         }
 
-        try (com.dms.lb.LoadBalancingService.InFlightHandle inFlight = loadBalancingService.trackInFlight(targetId)) {
+        try (inFlight) {
             if (targetId != nodeConfig.getId()) {
                 // Forward via RMI to target peer
                 RemoteDonationService peerStub = nodeRegistry.getPeerStub(targetId);
@@ -309,26 +321,49 @@ public class ApiController {
     }
 
     // -------------------------------------------------------------
-    // Exp 4: Bully Election Endpoints
+    // Exp 4: Election Endpoints (Bully & Ring)
     // -------------------------------------------------------------
     @PostMapping("/election/start")
     public ResponseEntity<Map<String, Object>> startElection() {
-        bullyElection.startElection();
+        electionManager.startElection();
         Map<String, Object> resp = new HashMap<>();
         resp.put("status", "STARTED");
-        resp.put("algorithm", bullyElection.getAlgorithmName());
+        resp.put("algorithm", electionManager.getAlgorithmName());
         resp.put("initiatorNodeId", nodeConfig.getId());
-        resp.put("message", "Bully election initiated by node " + nodeConfig.getId());
+        resp.put("message", electionManager.getAlgorithmName() + " election initiated by node " + nodeConfig.getId());
         return ResponseEntity.ok(resp);
     }
 
     @GetMapping("/election/status")
     public ResponseEntity<Map<String, Object>> getElectionStatus() {
         Map<String, Object> resp = new HashMap<>();
-        resp.put("algorithm", bullyElection.getAlgorithmName());
+        resp.put("algorithm", electionManager.getAlgorithmName());
+        resp.put("availableAlgorithms", List.of("BULLY", "RING"));
         resp.put("coordinatorId", nodeRegistry.getPrimaryId());
         resp.put("localId", nodeConfig.getId());
         resp.put("isCoordinator", nodeRegistry.getPrimaryId() == nodeConfig.getId());
+        return ResponseEntity.ok(resp);
+    }
+
+    @PostMapping("/election/algorithm")
+    public ResponseEntity<Map<String, Object>> setElectionAlgorithm(
+            @RequestParam(required = false) String algorithm,
+            jakarta.servlet.http.HttpServletRequest request) {
+        String targetAlgo = algorithm;
+        try {
+            if (request.getContentType() != null && request.getContentType().contains("application/json")) {
+                Map<?, ?> body = new com.fasterxml.jackson.databind.ObjectMapper().readValue(request.getInputStream(), Map.class);
+                if (body != null && body.containsKey("algorithm")) {
+                    targetAlgo = body.get("algorithm").toString();
+                }
+            }
+        } catch (Exception ignored) {}
+        if (targetAlgo != null) {
+            electionManager.setAlgorithm(targetAlgo);
+        }
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("status", "OK");
+        resp.put("algorithm", electionManager.getAlgorithmName());
         return ResponseEntity.ok(resp);
     }
 
@@ -640,5 +675,50 @@ public class ApiController {
     @GetMapping("/mr/shards")
     public ResponseEntity<List<Map<String, Object>>> getMapReduceShards() {
         return ResponseEntity.ok(mapReduceService.getShardBreakdown());
+    }
+
+    // -------------------------------------------------------------
+    // Exp 9 & Exp 10: Simulated MPI Endpoints
+    // -------------------------------------------------------------
+    @PostMapping("/mpi/collectives")
+    public ResponseEntity<Map<String, Object>> runMpiCollectives(
+            @RequestParam(required = false, defaultValue = "4") Integer ranks,
+            jakarta.servlet.http.HttpServletRequest request) {
+        int r = ranks != null ? ranks : 4;
+        try {
+            if (request.getContentType() != null && request.getContentType().contains("application/json")) {
+                Map<?, ?> body = new com.fasterxml.jackson.databind.ObjectMapper().readValue(request.getInputStream(), Map.class);
+                if (body != null && body.containsKey("ranks")) {
+                    Object val = body.get("ranks");
+                    if (val instanceof Number) r = ((Number) val).intValue();
+                }
+            }
+        } catch (Exception ignored) {}
+        return ResponseEntity.ok(mpiCollectivesService.runCollectives(r));
+    }
+
+    @PostMapping("/mpi/matrix")
+    public ResponseEntity<Map<String, Object>> runMpiMatrixMultiply(
+            @RequestParam(required = false, defaultValue = "200") Integer size,
+            @RequestParam(required = false, defaultValue = "4") Integer ranks,
+            jakarta.servlet.http.HttpServletRequest request) {
+        int s = size != null ? size : 200;
+        int r = ranks != null ? ranks : 4;
+        try {
+            if (request.getContentType() != null && request.getContentType().contains("application/json")) {
+                Map<?, ?> body = new com.fasterxml.jackson.databind.ObjectMapper().readValue(request.getInputStream(), Map.class);
+                if (body != null) {
+                    if (body.containsKey("size")) {
+                        Object val = body.get("size");
+                        if (val instanceof Number) s = ((Number) val).intValue();
+                    }
+                    if (body.containsKey("ranks")) {
+                        Object val = body.get("ranks");
+                        if (val instanceof Number) r = ((Number) val).intValue();
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+        return ResponseEntity.ok(mpiMatrixMultiplicationService.multiply(s, r));
     }
 }

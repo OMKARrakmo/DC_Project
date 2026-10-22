@@ -102,6 +102,19 @@ document.addEventListener("DOMContentLoaded", () => {
   // Exp 7 MapReduce Listeners
   const btnRunMr = document.getElementById("btn-run-mr");
   if (btnRunMr) btnRunMr.addEventListener("click", handleRunMapReduceJob);
+
+  // Exp 4 Election Algorithm Radio Listeners
+  document.querySelectorAll('input[name="election-algo-radio"]').forEach(r => {
+    r.addEventListener("change", handleElectionAlgoChange);
+  });
+
+  // Exp 9 MPI Collectives Listener
+  const btnRunMpi = document.getElementById("btn-run-mpi-collectives");
+  if (btnRunMpi) btnRunMpi.addEventListener("click", handleRunMpiCollectives);
+
+  // Exp 10 Matrix Mult Listener
+  const btnRunMatrix = document.getElementById("btn-run-matrix-mult");
+  if (btnRunMatrix) btnRunMatrix.addEventListener("click", handleRunMatrixMult);
 });
 
 // TAB NAVIGATION
@@ -631,15 +644,40 @@ async function fetchElectionStatus() {
         ? `<strong style="color:var(--accent-blue)">PRIMARY COORDINATOR (Highest active ID)</strong>`
         : `<strong style="color:var(--accent-green)">BACKUP NODE (Reports to Primary Node ${data.coordinatorId})</strong>`;
     }
+
+    if (data.algorithm) {
+      const radio = document.querySelector(`input[name="election-algo-radio"][value="${data.algorithm}"]`);
+      if (radio && !radio.matches(":focus")) radio.checked = true;
+      const algoBadge = document.getElementById("election-active-algo-badge");
+      if (algoBadge) algoBadge.textContent = data.algorithm;
+      const btnElection = document.getElementById("btn-trigger-election");
+      if (btnElection && !btnElection.disabled) btnElection.textContent = `Trigger ${data.algorithm} Election`;
+    }
   } catch (err) {
     console.error("Failed to fetch election status", err);
+  }
+}
+
+async function handleElectionAlgoChange(e) {
+  const algorithm = e.target.value;
+  try {
+    await fetch("/api/election/algorithm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ algorithm })
+    });
+    fetchElectionStatus();
+  } catch (err) {
+    console.error("Failed to update election algorithm", err);
   }
 }
 
 async function handleTriggerElection() {
   const btn = document.getElementById("btn-trigger-election");
   btn.disabled = true;
-  btn.textContent = "Running Bully Election...";
+  const algoRadio = document.querySelector('input[name="election-algo-radio"]:checked');
+  const currentAlgo = algoRadio ? algoRadio.value : "Bully";
+  btn.textContent = `Running ${currentAlgo} Election...`;
   try {
     const res = await fetch("/api/election/start", { method: "POST" });
     const data = await res.json();
@@ -653,7 +691,7 @@ async function handleTriggerElection() {
     alert("Election trigger failed: " + err.message);
   } finally {
     btn.disabled = false;
-    btn.textContent = "Trigger Bully Election";
+    btn.textContent = `Trigger ${currentAlgo} Election`;
   }
 }
 
@@ -1340,6 +1378,200 @@ async function handleRunMapReduceJob() {
   } finally {
     btn.disabled = false;
     btn.textContent = "Execute MapReduce Job";
+  }
+}
+
+// =============================================================
+// EXP 9: SIMULATED MPI COLLECTIVES
+// =============================================================
+
+async function handleRunMpiCollectives() {
+  const ranksSelect = document.getElementById("select-mpi-ranks");
+  const ranks = parseInt(ranksSelect.value, 10) || 4;
+
+  const btn = document.getElementById("btn-run-mpi-collectives");
+  btn.disabled = true;
+  btn.textContent = `Running ${ranks} Simulated Ranks...`;
+
+  try {
+    const res = await fetch(`/api/mpi/collectives?ranks=${ranks}`, { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) {
+      alert("MPI Collectives error: " + (data.error || "Execution failed"));
+      return;
+    }
+
+    // 1. Verification banner
+    const banner = document.getElementById("mpi-verification-banner");
+    if (banner) {
+      banner.style.display = "block";
+      if (data.verified) {
+        banner.className = "alert-box";
+        banner.style.background = "rgba(34, 197, 94, 0.12)";
+        banner.style.borderLeft = "4px solid var(--accent-green)";
+        banner.innerHTML = `
+          <strong style="color:var(--accent-green); font-size:1rem;">✓ MPI Collectives Verified!</strong>
+          <div style="font-size:0.8rem; color:var(--text-muted); margin-top:0.25rem;">
+            Gathered totals across ${data.ranks} simulated ranks matched Primary SQL SUM exactly across all branches!
+          </div>
+        `;
+      } else {
+        banner.className = "alert-box alert-red";
+        banner.innerHTML = `
+          <strong style="color:var(--accent-red); font-size:1rem;">⚠ Verification Mismatch!</strong>
+          <div style="font-size:0.8rem; color:#fca5a5; margin-top:0.25rem;">
+            Discrepancies: ${escapeHtml((data.discrepancies || []).join("; "))}
+          </div>
+        `;
+      }
+    }
+
+    // 2. Scatter card info
+    const scatterInfo = document.getElementById("mpi-scatter-info");
+    if (scatterInfo) {
+      let countsHtml = [];
+      for (const [r, cnt] of Object.entries(data.scatterCounts || {})) {
+        countsHtml.push(`Rank ${r}: ${cnt} records`);
+      }
+      scatterInfo.innerHTML = `
+        <div>• Total scattered: <strong>${data.totalRecordsScattered}</strong> records</div>
+        <div style="font-size:0.75rem; color:var(--accent-amber);">${countsHtml.join("  |  ")}</div>
+      `;
+    }
+
+    // 3. Gather card info
+    const gatherInfo = document.getElementById("mpi-gather-info");
+    if (gatherInfo) {
+      const parts = Object.entries(data.gatheredTotals || {}).map(([b, amt]) => `${b}: ₹${Number(amt).toFixed(2)}`);
+      gatherInfo.innerHTML = `
+        <div>• Gathered across all ${data.ranks} ranks:</div>
+        <div style="font-size:0.75rem; color:var(--accent-green); font-weight:600;">${parts.join("  |  ")}</div>
+      `;
+    }
+
+    // 4. Per-Rank partials table
+    const partialsTbody = document.getElementById("mpi-rank-partials-tbody");
+    if (partialsTbody) {
+      partialsTbody.innerHTML = "";
+      for (const [r, partials] of Object.entries(data.rankPartials || {})) {
+        const tr = document.createElement("tr");
+        const count = (data.scatterCounts && data.scatterCounts[r]) || 0;
+        tr.innerHTML = `
+          <td><strong>Rank ${r}</strong></td>
+          <td>${count} records</td>
+          <td style="font-family:var(--font-mono);">₹${Number(partials.Mumbai || 0).toFixed(2)}</td>
+          <td style="font-family:var(--font-mono);">₹${Number(partials.Pune || 0).toFixed(2)}</td>
+          <td style="font-family:var(--font-mono);">₹${Number(partials.Chennai || 0).toFixed(2)}</td>
+        `;
+        partialsTbody.appendChild(tr);
+      }
+    }
+
+    // 5. Gathered vs Primary SQL table
+    const gatheredTbody = document.getElementById("mpi-gathered-tbody");
+    if (gatheredTbody) {
+      gatheredTbody.innerHTML = "";
+      const branches = Object.keys(data.gatheredTotals || {}).sort();
+      branches.forEach(b => {
+        const gVal = data.gatheredTotals[b] || 0;
+        const sVal = (data.sqlTotals && data.sqlTotals[b]) || 0;
+        const match = Math.abs(gVal - sVal) < 0.01;
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td><span class="badge">${escapeHtml(b)}</span></td>
+          <td style="font-family:var(--font-mono); font-weight:700;">₹${Number(gVal).toFixed(2)}</td>
+          <td style="font-family:var(--font-mono); font-weight:700; color:var(--accent-blue);">₹${Number(sVal).toFixed(2)}</td>
+          <td>${match ? '<span class="badge badge-green">MATCH (100%)</span>' : '<span class="badge badge-red">MISMATCH</span>'}</td>
+        `;
+        gatheredTbody.appendChild(tr);
+      });
+    }
+
+  } catch (err) {
+    alert("MPI Collectives error: " + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Execute MPI Collectives";
+  }
+}
+
+// =============================================================
+// EXP 10: PARALLEL MATRIX MULTIPLICATION
+// =============================================================
+
+async function handleRunMatrixMult() {
+  const sizeSelect = document.getElementById("select-matrix-size");
+  const ranksSelect = document.getElementById("select-matrix-ranks");
+  const size = parseInt(sizeSelect.value, 10) || 200;
+  const ranks = parseInt(ranksSelect.value, 10) || 4;
+
+  const btn = document.getElementById("btn-run-matrix-mult");
+  btn.disabled = true;
+  btn.textContent = `Computing ${size}x${size} across ${ranks} Ranks...`;
+
+  try {
+    const res = await fetch(`/api/mpi/matrix?size=${size}&ranks=${ranks}`, { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) {
+      alert("Matrix multiplication error: " + (data.error || "Execution failed"));
+      return;
+    }
+
+    // 1. Verification banner
+    const banner = document.getElementById("matrix-verification-banner");
+    if (banner) {
+      banner.style.display = "block";
+      if (data.verified) {
+        banner.className = "alert-box";
+        banner.style.background = "rgba(34, 197, 94, 0.12)";
+        banner.style.borderLeft = "4px solid var(--accent-green)";
+        banner.innerHTML = `
+          <strong style="color:var(--accent-green); font-size:1rem;">✓ Parallel Matrix Multiplication Verified!</strong>
+          <div style="font-size:0.8rem; color:var(--text-muted); margin-top:0.25rem;">
+            Parallel result identical to sequential single-threaded computation (Max Difference: ${data.maxDifference}). Speedup achieved: <strong>${data.speedup}x</strong> (${(data.efficiency * 100).toFixed(1)}% efficiency).
+          </div>
+        `;
+      } else {
+        banner.className = "alert-box alert-red";
+        banner.innerHTML = `
+          <strong style="color:var(--accent-red); font-size:1rem;">⚠ Verification Mismatch!</strong>
+          <div style="font-size:0.8rem; color:#fca5a5; margin-top:0.25rem;">
+            Difference detected between parallel and sequential matrix: ${data.maxDifference}
+          </div>
+        `;
+      }
+    }
+
+    // 2. Metrics Table
+    document.getElementById("metric-matrix-size").textContent = `${data.size} × ${data.size}`;
+    document.getElementById("metric-matrix-ranks").textContent = `${data.ranks} Ranks (Simulated)`;
+    document.getElementById("metric-seq-time").textContent = `${data.sequentialTimeMs} ms`;
+    document.getElementById("metric-par-time").textContent = `${data.parallelTimeMs} ms`;
+    document.getElementById("metric-speedup").textContent = `${data.speedup}x`;
+    document.getElementById("metric-efficiency").textContent = `${(data.efficiency * 100).toFixed(1)}%`;
+    document.getElementById("metric-max-diff").textContent = data.maxDifference;
+
+    // 3. Matrix slice output
+    const container = document.getElementById("matrix-sample-container");
+    if (container && data.sampleC) {
+      let html = `<div style="color:var(--text-muted); font-size:0.75rem; margin-bottom:0.4rem;">Top-Left ${data.sampleC.length}×${data.sampleC.length} Elements of Matrix C:</div>`;
+      html += `<table style="width:100%; text-align:right; font-family:var(--font-mono); font-size:0.75rem; border-collapse:collapse;">`;
+      data.sampleC.forEach(row => {
+        html += `<tr>`;
+        row.forEach(val => {
+          html += `<td style="padding:0.25rem 0.5rem; border:1px solid rgba(255,255,255,0.06); color:var(--accent-blue);">${Math.round(val)}</td>`;
+        });
+        html += `</tr>`;
+      });
+      html += `</table>`;
+      container.innerHTML = html;
+    }
+
+  } catch (err) {
+    alert("Matrix Multiplication error: " + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Run Parallel Matrix Mult";
   }
 }
 

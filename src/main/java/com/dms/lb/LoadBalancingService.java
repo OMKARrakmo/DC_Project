@@ -122,6 +122,11 @@ public class LoadBalancingService {
         return selected;
     }
 
+    public synchronized InFlightHandle chooseAndTrackNode() {
+        int selected = chooseNode();
+        return new InFlightHandle(selected);
+    }
+
     public InFlightHandle trackInFlight(int nodeId) {
         return new InFlightHandle(nodeId);
     }
@@ -132,6 +137,10 @@ public class LoadBalancingService {
         public InFlightHandle(int nodeId) {
             this.nodeId = nodeId;
             gatewayInFlight.computeIfAbsent(nodeId, k -> new AtomicInteger(0)).incrementAndGet();
+        }
+
+        public int getNodeId() {
+            return nodeId;
         }
 
         @Override

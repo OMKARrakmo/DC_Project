@@ -23,6 +23,7 @@ public class RemoteDonationServiceImpl implements RemoteDonationService {
     private final LoadBalancingService loadBalancingService;
     private final ReplicationService replicationService;
     private final BullyElection bullyElection;
+    private final com.dms.election.ElectionManager electionManager;
     private final ClockSyncService clockSyncService;
     private final com.dms.mr.MapReduceService mapReduceService;
 
@@ -38,6 +39,7 @@ public class RemoteDonationServiceImpl implements RemoteDonationService {
                                     LoadBalancingService loadBalancingService,
                                     ReplicationService replicationService,
                                     @Lazy BullyElection bullyElection,
+                                    @Lazy com.dms.election.ElectionManager electionManager,
                                     ClockSyncService clockSyncService,
                                     @Lazy com.dms.mr.MapReduceService mapReduceService) {
         this.nodeConfig = nodeConfig;
@@ -48,11 +50,13 @@ public class RemoteDonationServiceImpl implements RemoteDonationService {
         this.loadBalancingService = loadBalancingService;
         this.replicationService = replicationService;
         this.bullyElection = bullyElection;
+        this.electionManager = electionManager;
         this.clockSyncService = clockSyncService;
         this.mapReduceService = mapReduceService;
 
         this.nodeRegistry.setEventLogger(eventLogger);
         this.nodeRegistry.setBullyElection(bullyElection);
+        this.nodeRegistry.setElectionAlgorithm(electionManager);
         this.nodeRegistry.setDonationRepository(donationRepository);
     }
 
@@ -300,13 +304,19 @@ public class RemoteDonationServiceImpl implements RemoteDonationService {
     @Override
     public void electionMsg(int fromId) throws RemoteException {
         checkCrash();
-        bullyElection.handleElectionMessage(fromId);
+        electionManager.handleElectionMessage(fromId);
     }
 
     @Override
     public void coordinatorMsg(int newCoordinatorId) throws RemoteException {
         checkCrash();
-        bullyElection.handleCoordinatorMessage(newCoordinatorId);
+        electionManager.handleCoordinatorMessage(newCoordinatorId);
+    }
+
+    @Override
+    public void ringElectionMsg(List<Integer> activeIds) throws RemoteException {
+        checkCrash();
+        electionManager.handleRingElectionMessage(activeIds);
     }
 
     @Override

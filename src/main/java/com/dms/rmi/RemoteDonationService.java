@@ -27,6 +27,8 @@ public interface RemoteDonationService extends Remote {
 
     void coordinatorMsg(int newCoordinatorId) throws RemoteException;
 
+    void ringElectionMsg(List<Integer> activeIds) throws RemoteException;
+
     long clockMillis() throws RemoteException;
 
     void applyOffset(long millis) throws RemoteException;

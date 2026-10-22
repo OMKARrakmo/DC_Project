@@ -113,14 +113,25 @@
   - `testVirtualClockSkewAndOffsetCalculations`: Passed (virtual time = system + skew + offset).
   - `testBerkeleySyncSingleNodeCoordinator`: Passed (computes average and relative offsets).
   - `testMapReduceMatchesSqlSum`: Passed (pure Java MapReduce matches SQL SUM exactly across all branches).
-- `test-p4-e2e.bat` / `test-p4-e2e.ps1` (3 local nodes on ports 8080, 8081, 8082):
+- `com.dms.MpiAndRingElectionTest`:
+  - `testElectionManagerAlgorithmSwitching`: Passed (dynamic switching between BULLY and RING).
+  - `testRingElectionBasicContract`: Passed (algorithm name is RING, coordinator msg updates primary).
+  - `testRingElectionCircuitCompletionElectsMaxId`: Passed (circuit completion elects highest active node ID).
+  - `testMpiCollectivesEmptyRepository`: Passed (empty state verification and SIMULATED badge).
+  - `testMpiCollectivesWithDataAndVerification`: Passed (Broadcast, Scatter, Compute, Gather verified against SQL SUM).
+  - `testMpiMatrixMultiplicationCorrectnessAndVerification`: Passed (parallel equals sequential, max diff 0.0, speedup & efficiency tracked).
+  - `testMpiMatrixMultiplicationWithSingleRank`: Passed (single-rank execution and verification).
+- `test-p5-e2e.bat` / `test-p5-e2e.ps1` (3 local nodes on ports 8080, 8081, 8082):
   - Check 1 (Cross-node RMI routing) Passed.
   - Check 2 (Synchronous replication consistency) Passed.
   - Exp 2 & Exp 3 (ThreadPool burst, race demo, Berkeley clock sync) Passed.
   - Check 3 (Primary process kill, Bully election failover to Node 2, post-failover write confirmed, pre-kill donation intact) Passed.
   - Check 4 (Distributed MapReduce == Primary SQL SUM 100% verified across all live shards) Passed.
+  - Check 5 (Ring election token circulation + simulated MPI collectives verified against SQL SUM + parallel matrix multiplication max difference == 0.0 with "SIMULATED (not MPI)" badge) Passed.
+- `test-p4-e2e.bat`:
+  - Regression re-run passed (Checks 1-4).
 - `test-p2-load-balancer.bat`:
-  - Regression re-run passed (Round Robin 4, 4, 4; Least Connections 4, 4, 4).
+  - Regression re-run passed (Round Robin 4, 4, 4; Least Connections 3, 4, 5).
 - `smoke-two-machine.bat --local`:
   - Regression re-run passed (cross-node RMI, receipt fields, NGO query).
 
@@ -138,9 +149,14 @@
 11. **FloorMod for Sharding**: Used `Math.floorMod(dId, liveCount)` instead of `%` to prevent negative indices if negative donation IDs or hashes were ever encountered.
 12. **Reproducible Race Conditions**: Synchronized worker threads at a `CyclicBarrier` followed by a 2ms sleep to reliably force thread context switches and reproduce lost updates under concurrent read-modify-write patterns.
 13. **Flexible HTTP Parameter Parsing**: In `ApiController`, parsed request payload via `HttpServletRequest` and Jackson fallback so endpoints transparently accept either JSON request bodies or URL query parameters without throwing HTTP 415.
+14. **Atomic Node Selection & Reservation**: Implemented synchronized `chooseAndTrackNode()` in `LoadBalancingService` so load-balanced requests atomically select candidate and reserve in-flight tracking before concurrent threads inspect connection counts.
+15. **Dynamic Election Algorithm Switching**: Introduced `@Primary ElectionManager` delegating runtime election operations to either `BullyElection` or `RingElection` as chosen via REST (`POST /api/election/algorithm`) or UI.
+16. **Logical Ring Circulation & Circuit Completion**: Structured `RingElection` so a token list of visited node IDs traverses live successors in logical circular order; when the initiator observes its own ID in the token, circuit completion is confirmed, the maximum active ID is elected coordinator, and coordinator announcement is broadcast to all peers.
+17. **MPI Simulation Honesty Rule**: Clearly labeled all in-JVM thread-based MPI collectives (Exp 9) and parallel matrix multiplication (Exp 10) with the explicit badge `"SIMULATED (not MPI)"` across UI, REST responses, and logs per SPEC Section 9.
 
 ## Known Bugs
 None.
 
 ## Exact Next Step
-Phase P5: Exps 9, 10 (MPI-style collectives and parallel matrix multiplication).
+Phase P6: Polish, cross-machine deployment verification, end-to-end testing, viva prep.
+

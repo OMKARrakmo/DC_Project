@@ -29,6 +29,7 @@ public class NodeRegistry {
 
     private EventLogger eventLogger;
     private com.dms.election.BullyElection bullyElection;
+    private com.dms.election.ElectionAlgorithm electionAlgorithm;
     private DonationRepository donationRepository;
 
     public static class PeerState {
@@ -88,6 +89,15 @@ public class NodeRegistry {
 
     public void setBullyElection(com.dms.election.BullyElection bullyElection) {
         this.bullyElection = bullyElection;
+        this.electionAlgorithm = bullyElection;
+    }
+
+    public void setElectionAlgorithm(com.dms.election.ElectionAlgorithm electionAlgorithm) {
+        this.electionAlgorithm = electionAlgorithm;
+    }
+
+    public com.dms.election.ElectionAlgorithm getElectionAlgorithm() {
+        return this.electionAlgorithm;
     }
 
     public void setDonationRepository(DonationRepository donationRepository) {
@@ -313,11 +323,14 @@ public class NodeRegistry {
 
                     // Check if the dead node was the current primary
                     if (deadId == primaryId.get()) {
+                        String algoName = electionAlgorithm != null ? electionAlgorithm.getAlgorithmName() : "Bully";
                         if (eventLogger != null) {
                             eventLogger.log("EXP8-FT", String.format(
-                                    "PRIMARY node=%d failed! Initiating Bully election failover...", deadId));
+                                    "PRIMARY node=%d failed! Initiating %s election failover...", deadId, algoName));
                         }
-                        if (bullyElection != null) {
+                        if (electionAlgorithm != null) {
+                            electionAlgorithm.startElection();
+                        } else if (bullyElection != null) {
                             bullyElection.startElection();
                         }
                     }
