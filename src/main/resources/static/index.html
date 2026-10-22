@@ -27,11 +27,11 @@
   <nav class="tabs">
     <button class="tab-btn active" data-tab="tab-cluster">Cluster Topology</button>
     <button class="tab-btn" data-tab="tab-exp1">Exp 1: Java RMI</button>
-    <button class="tab-btn disabled" title="Unlocks in Phase 2">Exp 2: Multithreading (P4)</button>
+    <button class="tab-btn" data-tab="tab-exp6">Exp 6: Load Balancing</button>
+    <button class="tab-btn disabled" title="Unlocks in Phase 4">Exp 2: Multithreading (P4)</button>
     <button class="tab-btn disabled" title="Unlocks in Phase 4">Exp 3: Clocks (P4)</button>
     <button class="tab-btn disabled" title="Unlocks in Phase 3">Exp 4: Election (P3)</button>
     <button class="tab-btn disabled" title="Unlocks in Phase 3">Exp 5: Replication (P3)</button>
-    <button class="tab-btn disabled" title="Unlocks in Phase 2">Exp 6: Load Balancing (P2)</button>
     <button class="tab-btn disabled" title="Unlocks in Phase 4">Exp 7: MapReduce (P4)</button>
     <button class="tab-btn disabled" title="Unlocks in Phase 3">Exp 8: Fault Tolerance (P3)</button>
     <button class="tab-btn disabled" title="Unlocks in Phase 5">Exp 9: MPI Collectives (P5)</button>
@@ -187,6 +187,104 @@
       </div>
     </section>
 
+    <!-- EXP 6: LOAD BALANCING TAB -->
+    <section id="tab-exp6" class="tab-pane">
+      <div class="grid-2">
+        <!-- Configuration & Controls -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Load Balancer Configuration</h2>
+              <div class="card-desc">Select distribution strategy & simulate network processing delays</div>
+            </div>
+          </div>
+          <form id="form-lb-config">
+            <div class="form-group">
+              <label>Routing Strategy</label>
+              <div style="display:flex; gap:1.5rem; margin-top:0.3rem;">
+                <label style="cursor:pointer; display:flex; align-items:center; gap:0.4rem; color:var(--text-main);">
+                  <input type="radio" name="lb-strategy-radio" value="LEAST_CONNECTIONS" checked>
+                  <span><strong>Least Connections</strong> (Default)</span>
+                </label>
+                <label style="cursor:pointer; display:flex; align-items:center; gap:0.4rem; color:var(--text-main);">
+                  <input type="radio" name="lb-strategy-radio" value="ROUND_ROBIN">
+                  <span><strong>Round Robin</strong></span>
+                </label>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="input-lb-delay">Artificial Processing Delay (ms)</label>
+              <div style="display:flex; gap:0.5rem;">
+                <input type="number" id="input-lb-delay" min="0" max="5000" step="50" value="500" style="flex:1;">
+                <button type="button" class="btn-secondary" id="btn-update-delay">Update Delay</button>
+              </div>
+              <span style="font-size:0.75rem; color:var(--text-muted);">
+                Induces overlap so concurrent requests spread across available nodes.
+              </span>
+            </div>
+
+            <div class="form-group" style="border-top:1px solid rgba(255,255,255,0.08); padding-top:0.8rem;">
+              <label for="input-burst-count">Send Concurrent Requests (Burst)</label>
+              <div style="display:flex; gap:0.5rem;">
+                <input type="number" id="input-burst-count" min="1" max="50" value="12" style="width:100px;">
+                <button type="button" class="btn-primary" id="btn-send-burst" style="flex:1;">
+                  Send 12 Requests
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+
+        <!-- Live Active-Connection Counters per Node -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Live Active-Connection Counters</h2>
+              <div class="card-desc">Real-time concurrent connections per node (in-flight + processing)</div>
+            </div>
+            <button class="btn-secondary" id="btn-refresh-lb-conns">Refresh</button>
+          </div>
+          <div id="lb-counters-container" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:0.75rem;">
+            <!-- Populated dynamically: Node cards with connection gauges -->
+          </div>
+          <div id="lb-distribution-summary" class="trace-box" style="margin-top:0.5rem; display:none;">
+            <div class="trace-path">Last Burst Distribution:</div>
+            <div id="lb-distribution-text" style="color:var(--text-main); font-weight:600;">-</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Handled-By Results Table -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">Handled-By Distribution Table</h2>
+            <div class="card-desc">Record of which node processed each request (Node, Host IP, OS, Thread, Lamport TS, Latency)</div>
+          </div>
+          <button class="btn-secondary" id="btn-clear-lb-results">Clear Results</button>
+        </div>
+        <table class="data-table" id="lb-results-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Handled By</th>
+              <th>Host IP</th>
+              <th>Operating System</th>
+              <th>Thread Name</th>
+              <th>Lamport TS</th>
+              <th>Latency (ms)</th>
+              <th>Status</th>
+              <th>Receipt Message</th>
+            </tr>
+          </thead>
+          <tbody id="lb-results-tbody">
+            <tr><td colspan="9" style="text-align:center;">No burst requests sent yet. Click "Send 12 Requests" above.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     <!-- LIVE EVENT LOG (VISIBLE ON ALL TABS) -->
     <section class="event-log-container">
       <div class="log-header">
@@ -197,6 +295,7 @@
         <div class="log-controls">
           <select id="log-filter-tag" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;">
             <option value="ALL">All Tags</option>
+            <option value="EXP6-LB">EXP6-LB</option>
             <option value="EXP1-RMI">EXP1-RMI</option>
             <option value="EXP8-FT">EXP8-FT</option>
             <option value="EXP3-CLOCK">EXP3-CLOCK</option>

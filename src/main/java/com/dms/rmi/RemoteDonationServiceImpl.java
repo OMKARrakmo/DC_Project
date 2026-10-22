@@ -15,6 +15,7 @@ public class RemoteDonationServiceImpl implements RemoteDonationService {
     private final LamportClock lamportClock;
     private final EventLogger eventLogger;
     private final DonationRepository donationRepository;
+    private final com.dms.lb.LoadBalancingService loadBalancingService;
 
     private static final Set<String> VALID_BRANCHES = Set.of("MUMBAI", "PUNE", "CHENNAI");
 
@@ -22,12 +23,14 @@ public class RemoteDonationServiceImpl implements RemoteDonationService {
                                     NodeRegistry nodeRegistry,
                                     LamportClock lamportClock,
                                     EventLogger eventLogger,
-                                    DonationRepository donationRepository) {
+                                    DonationRepository donationRepository,
+                                    com.dms.lb.LoadBalancingService loadBalancingService) {
         this.nodeConfig = nodeConfig;
         this.nodeRegistry = nodeRegistry;
         this.lamportClock = lamportClock;
         this.eventLogger = eventLogger;
         this.donationRepository = donationRepository;
+        this.loadBalancingService = loadBalancingService;
         this.nodeRegistry.setEventLogger(eventLogger);
     }
 
@@ -40,6 +43,22 @@ public class RemoteDonationServiceImpl implements RemoteDonationService {
     public Receipt process(DonationRequest r) throws RemoteException {
         nodeRegistry.incrementConnections();
         try {
+            // Apply artificial processing delay if configured
+            long delay = (r.getDelayMs() != null && r.getDelayMs() > 0)
+                    ? r.getDelayMs()
+                    : loadBalancingService.getArtificialDelayMs();
+
+            if (delay > 0) {
+                eventLogger.log("EXP6-LB", String.format(
+                        "Applying artificial processing delay of %dms on node=%d (thread=%s)",
+                        delay, nodeConfig.getId(), Thread.currentThread().getName()));
+                try {
+                    Thread.sleep(delay);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+
             // Update Lamport clock on receiving request
             if (r.getClientLamportTs() > 0) {
                 lamportClock.update(r.getClientLamportTs());

@@ -12,6 +12,7 @@ public class DonationRequest implements Serializable {
     private boolean isolated = false;
     private long clientLamportTs = 0L;
     private Integer targetNodeId; // Optional: specify target node to route via RMI
+    private Integer delayMs;      // Optional: artificial processing delay in ms
 
     public DonationRequest() {
     }
@@ -29,6 +30,14 @@ public class DonationRequest implements Serializable {
         this.isolated = isolated;
         this.clientLamportTs = clientLamportTs;
         this.targetNodeId = targetNodeId;
+    }
+
+    public Integer getDelayMs() {
+        return delayMs;
+    }
+
+    public void setDelayMs(Integer delayMs) {
+        this.delayMs = delayMs;
     }
 
     public String getDonor() {
@@ -88,6 +97,7 @@ public class DonationRequest implements Serializable {
                 ", isolated=" + isolated +
                 ", clientLamportTs=" + clientLamportTs +
                 ", targetNodeId=" + targetNodeId +
+                ", delayMs=" + delayMs +
                 '}';
     }
 }

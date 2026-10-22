@@ -9,10 +9,12 @@ document.addEventListener("DOMContentLoaded", () => {
   setupSSE();
   fetchCluster();
   fetchLedger();
+  fetchLbConfig();
 
   // Periodic refresh
   setInterval(fetchCluster, 3000);
   setInterval(fetchLedger, 5000);
+  setInterval(fetchLbConfig, 2000);
 
   // Event Listeners
   document.getElementById("btn-refresh-cluster").addEventListener("click", fetchCluster);
@@ -22,6 +24,22 @@ document.addEventListener("DOMContentLoaded", () => {
 
   document.getElementById("form-donate").addEventListener("submit", handleDonate);
   document.getElementById("form-branch-query").addEventListener("submit", handleBranchQuery);
+
+  // Exp 6 Load Balancing Listeners
+  document.querySelectorAll('input[name="lb-strategy-radio"]').forEach(r => {
+    r.addEventListener("change", handleStrategyChange);
+  });
+  document.getElementById("btn-update-delay").addEventListener("click", handleUpdateDelay);
+  document.getElementById("btn-send-burst").addEventListener("click", handleSendBurst);
+  document.getElementById("btn-refresh-lb-conns").addEventListener("click", fetchLbConfig);
+  document.getElementById("btn-clear-lb-results").addEventListener("click", () => {
+    document.getElementById("lb-results-tbody").innerHTML = `<tr><td colspan="9" style="text-align:center;">Results cleared.</td></tr>`;
+    document.getElementById("lb-distribution-summary").style.display = "none";
+  });
+  document.getElementById("input-burst-count").addEventListener("input", (e) => {
+    const val = e.target.value;
+    document.getElementById("btn-send-burst").textContent = `Send ${val} Requests`;
+  });
 });
 
 // TAB NAVIGATION
@@ -333,4 +351,181 @@ function escapeHtml(str) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+}
+
+// EXP 6: LOAD BALANCING FUNCTIONS
+
+async function fetchLbConfig() {
+  try {
+    const res = await fetch("/api/lb/config");
+    if (!res.ok) return;
+    const data = await res.json();
+
+    // Update strategy radio if not focused
+    if (data.strategy) {
+      const radio = document.querySelector(`input[name="lb-strategy-radio"][value="${data.strategy}"]`);
+      if (radio && !radio.matches(":focus")) {
+        radio.checked = true;
+      }
+    }
+
+    // Update delay input if not focused
+    const delayInput = document.getElementById("input-lb-delay");
+    if (delayInput && !delayInput.matches(":focus") && data.artificialDelayMs !== undefined) {
+      delayInput.value = data.artificialDelayMs;
+    }
+
+    // Render connection counters
+    renderLbCounters(data.activeConnections || {});
+  } catch (err) {
+    console.error("Failed to fetch LB config", err);
+  }
+}
+
+function renderLbCounters(activeConns) {
+  const container = document.getElementById("lb-counters-container");
+  if (!container) return;
+
+  const nodeIds = Object.keys(activeConns).map(k => parseInt(k, 10)).sort((a, b) => a - b);
+  if (nodeIds.length === 0) {
+    container.innerHTML = `<div style="color:var(--text-muted); font-size:0.8rem;">No live nodes detected.</div>`;
+    return;
+  }
+
+  container.innerHTML = "";
+  nodeIds.forEach(id => {
+    const count = activeConns[id] || 0;
+    const isSelf = localNode && localNode.nodeId === id;
+    const isBusy = count > 0;
+
+    const card = document.createElement("div");
+    card.className = "receipt-item";
+    card.style.display = "flex";
+    card.style.flexDirection = "column";
+    card.style.gap = "0.2rem";
+    card.style.border = isBusy ? "1px solid var(--accent-amber)" : "1px solid rgba(255,255,255,0.08)";
+    card.style.background = isBusy ? "rgba(245, 158, 11, 0.1)" : "#1e293b";
+
+    card.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <span style="font-weight:700; font-size:0.85rem; color:var(--text-main);">Node ${id}</span>
+        ${isSelf ? '<span class="badge" style="font-size:0.6rem; padding:0.1rem 0.3rem;">SELF</span>' : ''}
+      </div>
+      <div class="lbl">Active Connections</div>
+      <div class="val" style="font-size:1.1rem; color:${isBusy ? 'var(--accent-amber)' : 'var(--accent-blue)'}; display:flex; align-items:center; gap:0.4rem;">
+        ${isBusy ? '<span class="log-pulse" style="background:var(--accent-amber); box-shadow:0 0 6px var(--accent-amber);"></span>' : ''}
+        <span>${count}</span>
+      </div>
+    `;
+    container.appendChild(card);
+  });
+}
+
+async function handleStrategyChange(e) {
+  const strategy = e.target.value;
+  try {
+    await fetch("/api/lb/strategy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ strategy })
+    });
+    fetchLbConfig();
+  } catch (err) {
+    console.error("Failed to update LB strategy", err);
+  }
+}
+
+async function handleUpdateDelay() {
+  const delayInput = document.getElementById("input-lb-delay");
+  const delayMs = parseInt(delayInput.value, 10) || 0;
+  const btn = document.getElementById("btn-update-delay");
+  btn.disabled = true;
+
+  try {
+    await fetch("/api/lb/delay", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ delayMs })
+    });
+    fetchLbConfig();
+  } catch (err) {
+    console.error("Failed to update artificial delay", err);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function handleSendBurst() {
+  const countInput = document.getElementById("input-burst-count");
+  const count = parseInt(countInput.value, 10) || 12;
+
+  const strategyRadio = document.querySelector('input[name="lb-strategy-radio"]:checked');
+  const strategy = strategyRadio ? strategyRadio.value : "LEAST_CONNECTIONS";
+
+  const delayInput = document.getElementById("input-lb-delay");
+  const delayMs = parseInt(delayInput.value, 10) || 0;
+
+  const btn = document.getElementById("btn-send-burst");
+  btn.disabled = true;
+  btn.textContent = `Sending ${count} concurrent requests...`;
+
+  try {
+    const res = await fetch("/api/lb/burst", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ count, strategy, delayMs })
+    });
+    const data = await res.json();
+
+    renderLbResults(data);
+    fetchCluster();
+    fetchLbConfig();
+    fetchLedger();
+  } catch (err) {
+    alert("Burst execution error: " + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = `Send ${count} Requests`;
+  }
+}
+
+function renderLbResults(data) {
+  // Update distribution summary
+  const summaryBox = document.getElementById("lb-distribution-summary");
+  const summaryText = document.getElementById("lb-distribution-text");
+  if (summaryBox && summaryText && data.distribution) {
+    summaryBox.style.display = "flex";
+    const parts = [];
+    for (const [nodeId, handledCount] of Object.entries(data.distribution)) {
+      parts.push(`Node ${nodeId}: ${handledCount} requests (${Math.round((handledCount / data.count) * 100)}%)`);
+    }
+    summaryText.textContent = `Strategy: ${data.strategy} | Total: ${data.count} | ` + parts.join("  •  ");
+  }
+
+  // Render Handled-By Table
+  const tbody = document.getElementById("lb-results-tbody");
+  tbody.innerHTML = "";
+
+  if (!data.results || data.results.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;">No results returned.</td></tr>`;
+    return;
+  }
+
+  data.results.forEach(item => {
+    const tr = document.createElement("tr");
+    const r = item.receipt || {};
+
+    tr.innerHTML = `
+      <td><strong>#${item.index}</strong></td>
+      <td><span class="badge badge-primary">Node ${r.processingNodeId !== undefined ? r.processingNodeId : '?'}</span></td>
+      <td>${escapeHtml(r.host || 'N/A')}</td>
+      <td>${escapeHtml(r.os || 'N/A')}</td>
+      <td><code>${escapeHtml(r.threadName || 'N/A')}</code></td>
+      <td><strong>${r.lamportTs !== undefined ? r.lamportTs : 0}</strong></td>
+      <td>${item.latencyMs} ms</td>
+      <td><span class="badge badge-green">${escapeHtml(r.status || 'OK')}</span></td>
+      <td style="font-size:0.75rem; color:var(--text-muted);">${escapeHtml(r.message || '')}</td>
+    `;
+    tbody.appendChild(tr);
+  });
 }
