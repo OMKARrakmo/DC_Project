@@ -1,11 +1,16 @@
 package com.dms.rmi;
 
 import com.dms.core.*;
+import com.dms.election.BullyElection;
+import com.dms.lb.LoadBalancingService;
+import com.dms.repl.ReplicationService;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.rmi.RemoteException;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Service
 public class RemoteDonationServiceImpl implements RemoteDonationService {
@@ -15,7 +20,11 @@ public class RemoteDonationServiceImpl implements RemoteDonationService {
     private final LamportClock lamportClock;
     private final EventLogger eventLogger;
     private final DonationRepository donationRepository;
-    private final com.dms.lb.LoadBalancingService loadBalancingService;
+    private final LoadBalancingService loadBalancingService;
+    private final ReplicationService replicationService;
+    private final BullyElection bullyElection;
+
+    private final AtomicLong nextSeq = new AtomicLong(0);
 
     private static final Set<String> VALID_BRANCHES = Set.of("MUMBAI", "PUNE", "CHENNAI");
 
@@ -24,23 +33,38 @@ public class RemoteDonationServiceImpl implements RemoteDonationService {
                                     LamportClock lamportClock,
                                     EventLogger eventLogger,
                                     DonationRepository donationRepository,
-                                    com.dms.lb.LoadBalancingService loadBalancingService) {
+                                    LoadBalancingService loadBalancingService,
+                                    ReplicationService replicationService,
+                                    @Lazy BullyElection bullyElection) {
         this.nodeConfig = nodeConfig;
         this.nodeRegistry = nodeRegistry;
         this.lamportClock = lamportClock;
         this.eventLogger = eventLogger;
         this.donationRepository = donationRepository;
         this.loadBalancingService = loadBalancingService;
+        this.replicationService = replicationService;
+        this.bullyElection = bullyElection;
+
         this.nodeRegistry.setEventLogger(eventLogger);
+        this.nodeRegistry.setBullyElection(bullyElection);
+        this.nodeRegistry.setDonationRepository(donationRepository);
+    }
+
+    private void checkCrash() throws RemoteException {
+        if (nodeRegistry.isSimulatedCrash()) {
+            throw new RemoteException("Node " + nodeConfig.getId() + " is stopped (simulated crash)");
+        }
     }
 
     @Override
     public NodeInfo ping() throws RemoteException {
+        checkCrash();
         return nodeRegistry.getLocalNodeInfo();
     }
 
     @Override
     public Receipt process(DonationRequest r) throws RemoteException {
+        checkCrash();
         nodeRegistry.incrementConnections();
         try {
             // Apply artificial processing delay if configured
@@ -104,17 +128,47 @@ public class RemoteDonationServiceImpl implements RemoteDonationService {
                     ts,
                     receiptId,
                     "node-" + nodeConfig.getId(),
-                    "CONFIRMED",
-                    1L,
+                    "PENDING",
+                    0L,
                     r.isIsolated()
             );
 
-            // In P1: commit just saves locally
-            commit(donation);
+            // WRITE PATH: Call commit() on the current primary
+            int primaryId = nodeRegistry.getPrimaryId();
+            Receipt commitReceipt;
+
+            if (primaryId == nodeConfig.getId()) {
+                // This processing node IS the primary
+                commitReceipt = commit(donation);
+            } else {
+                // Forward commit to the primary node via Java RMI
+                RemoteDonationService primaryStub = nodeRegistry.getPeerStub(primaryId);
+                if (primaryStub == null) {
+                    eventLogger.log("EXP8-FT", String.format(
+                            "Primary node=%d unreachable during commit call! Triggering Bully election.", primaryId));
+                    bullyElection.startElection();
+                    return new Receipt(
+                            nodeConfig.getId(),
+                            nodeConfig.getHost(),
+                            os,
+                            threadName,
+                            ts,
+                            primaryId,
+                            "FAILED",
+                            "Primary node " + primaryId + " is unavailable. Election initiated."
+                    );
+                }
+
+                eventLogger.log("EXP5-REPL", String.format(
+                        "Processing node=%d calling commit() on primary node=%d via Java RMI for receipt=%s",
+                        nodeConfig.getId(), primaryId, receiptId));
+                commitReceipt = primaryStub.commit(donation);
+                lamportClock.update(commitReceipt.getLamportTs());
+            }
 
             eventLogger.logWithLamport("EXP1-RMI", ts, String.format(
-                    "Processed donation receipt=%s donor=%s amount=%s branch=%s thread=%s",
-                    receiptId, donor, amount, normalizedBranch, threadName));
+                    "Processed donation receipt=%s donor=%s amount=%s branch=%s thread=%s (primary=%d status=%s)",
+                    receiptId, donor, amount, normalizedBranch, threadName, primaryId, commitReceipt.getStatus()));
 
             return new Receipt(
                     nodeConfig.getId(),
@@ -122,9 +176,11 @@ public class RemoteDonationServiceImpl implements RemoteDonationService {
                     os,
                     threadName,
                     ts,
-                    nodeRegistry.getPrimaryId(),
-                    "CONFIRMED",
-                    "Processed on node " + nodeConfig.getId() + " (" + nodeConfig.getHost() + ")"
+                    primaryId,
+                    commitReceipt.getStatus(),
+                    String.format("Processed on node %d, committed by primary node %d [%s]",
+                            nodeConfig.getId(), primaryId, commitReceipt.getStatus()),
+                    receiptId
             );
         } finally {
             nodeRegistry.decrementConnections();
@@ -133,29 +189,98 @@ public class RemoteDonationServiceImpl implements RemoteDonationService {
 
     @Override
     public Receipt commit(Donation d) throws RemoteException {
-        // Primary / processing node: append to ledger
+        checkCrash();
+        long ts = lamportClock.tick();
+
+        // Assign sequence number
+        d.setSeq(nextSeq.incrementAndGet());
+        d.setStatus("PENDING");
         donationRepository.save(d);
-        eventLogger.log("EXP1-RMI", "Committed donation receipt=" + d.getReceiptId() + " to local H2 ledger");
+
+        eventLogger.logWithLamport("EXP5-REPL", ts, String.format(
+                "Primary node=%d appended donation receipt=%s seq=%d to ledger. Initiating replication...",
+                nodeConfig.getId(), d.getReceiptId(), d.getSeq()));
+
+        // Replicate to backups per selected replication mode (Sync or Async)
+        boolean replicated = replicationService.replicate(d);
+
+        if (!replicated) {
+            d.setStatus("REJECTED");
+            donationRepository.delete(d);
+            eventLogger.log("EXP5-REPL", String.format(
+                    "Primary node=%d rejected donation receipt=%s: synchronous backup acknowledgement failed",
+                    nodeConfig.getId(), d.getReceiptId()));
+            return new Receipt(
+                    nodeConfig.getId(),
+                    nodeConfig.getHost(),
+                    System.getProperty("os.name"),
+                    Thread.currentThread().getName(),
+                    ts,
+                    nodeConfig.getId(),
+                    "REJECTED",
+                    "Synchronous replication failed: required backup node did not acknowledge",
+                    d.getReceiptId()
+            );
+        }
+
+        d.setStatus("COMMITTED");
+        donationRepository.save(d);
+        eventLogger.log("EXP5-REPL", String.format(
+                "Primary node=%d confirmed donation receipt=%s seq=%d",
+                nodeConfig.getId(), d.getReceiptId(), d.getSeq()));
+
         return new Receipt(
                 nodeConfig.getId(),
                 nodeConfig.getHost(),
                 System.getProperty("os.name"),
                 Thread.currentThread().getName(),
-                d.getLamportTs(),
-                nodeRegistry.getPrimaryId(),
-                "COMMITTED",
-                "Committed on node " + nodeConfig.getId()
+                ts,
+                nodeConfig.getId(),
+                "CONFIRMED",
+                "Committed on primary node " + nodeConfig.getId(),
+                d.getReceiptId()
         );
     }
 
     @Override
     public void replicate(Donation d) throws RemoteException {
-        donationRepository.save(d);
-        eventLogger.log("EXP5-REPL", "Replicated donation receipt=" + d.getReceiptId() + " to backup ledger");
+        checkCrash();
+        d.setStatus("COMMITTED");
+        java.util.Optional<Donation> existing = donationRepository.findByReceiptId(d.getReceiptId());
+        if (existing.isPresent()) {
+            Donation target = existing.get();
+            target.setSeq(d.getSeq());
+            target.setStatus("COMMITTED");
+            target.setLamportTs(d.getLamportTs());
+            target.setAmount(d.getAmount());
+            target.setBranch(d.getBranch());
+            target.setDonor(d.getDonor());
+            target.setHandledBy(d.getHandledBy());
+            target.setIsolated(d.isIsolated());
+            donationRepository.save(target);
+        } else {
+            Donation toSave = new Donation(
+                    null,
+                    d.getDonor(),
+                    d.getAmount(),
+                    d.getBranch(),
+                    d.getLamportTs(),
+                    d.getReceiptId(),
+                    d.getHandledBy(),
+                    "COMMITTED",
+                    d.getSeq(),
+                    d.isIsolated()
+            );
+            donationRepository.save(toSave);
+        }
+        eventLogger.log("EXP5-REPL", String.format(
+                "Backup node=%d stored replicated donation receipt=%s seq=%d in local ledger",
+                nodeConfig.getId(), d.getReceiptId(), d.getSeq()));
     }
 
     @Override
     public BigDecimal branchTotal(String branch) throws RemoteException {
+        checkCrash();
         long ts = lamportClock.tick();
         String normalized = normalizeBranch(branch);
         BigDecimal total = donationRepository.sumByBranch(normalized);
@@ -168,30 +293,32 @@ public class RemoteDonationServiceImpl implements RemoteDonationService {
 
     @Override
     public void electionMsg(int fromId) throws RemoteException {
-        lamportClock.tick();
-        eventLogger.log("EXP4-ELECT", "Received electionMsg from node=" + fromId);
+        checkCrash();
+        bullyElection.handleElectionMessage(fromId);
     }
 
     @Override
     public void coordinatorMsg(int newCoordinatorId) throws RemoteException {
-        lamportClock.tick();
-        nodeRegistry.setPrimaryId(newCoordinatorId);
-        eventLogger.log("EXP4-ELECT", "Received coordinatorMsg: new coordinator is node=" + newCoordinatorId);
+        checkCrash();
+        bullyElection.handleCoordinatorMessage(newCoordinatorId);
     }
 
     @Override
     public long clockMillis() throws RemoteException {
+        checkCrash();
         return System.currentTimeMillis();
     }
 
     @Override
     public void applyOffset(long millis) throws RemoteException {
+        checkCrash();
         lamportClock.tick();
         eventLogger.log("EXP3-CLOCK", "Applied clock offset=" + millis + "ms");
     }
 
     @Override
     public Map<String, BigDecimal> mapPhase(List<Integer> liveSortedIds) throws RemoteException {
+        checkCrash();
         long ts = lamportClock.tick();
         eventLogger.logWithLamport("EXP7-MR", ts, "MapPhase invoked with live nodes=" + liveSortedIds);
         Map<String, BigDecimal> result = new HashMap<>();
@@ -204,7 +331,20 @@ public class RemoteDonationServiceImpl implements RemoteDonationService {
 
     @Override
     public List<Donation> snapshot() throws RemoteException {
+        checkCrash();
         return donationRepository.findByIsolatedFalseOrderByIdAsc();
+    }
+
+    @Override
+    public String getLedgerHash() throws RemoteException {
+        checkCrash();
+        return replicationService.computeLedgerHash();
+    }
+
+    @Override
+    public long getLedgerCount() throws RemoteException {
+        checkCrash();
+        return donationRepository.findByIsolatedFalseOrderByIdAsc().size();
     }
 
     private String normalizeBranch(String branch) {

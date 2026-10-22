@@ -34,6 +34,33 @@
     - Detailed handled-by table displaying Node ID, Host IP, OS, Thread Name, Lamport TS, and Latency.
   - Created automated test scripts: `test-p2-load-balancer.bat`, `test-p2-load-balancer.ps1`, `test-p2-load-balancer.sh`.
 
+- **P3: Bully Election (Exp 4), Replication (Exp 5), Fault Tolerance (Exp 8)** [COMPLETED]
+  - Implemented `ElectionAlgorithm` interface and `BullyElection` component:
+    - Initiates election to higher node IDs via RMI `electionMsg()`.
+    - If higher answers OK, waits for coordinator announcement; if none answers, becomes Coordinator/Primary and broadcasts `coordinatorMsg()`.
+    - Real-time `[EXP4-ELECT]` event emission and live message trace.
+  - Implemented Replication and Consistency (`ReplicationService`):
+    - Full write path: Gateway -> Processing Node (validates, stamps Lamport, generates receipt) -> Primary `commit()` via RMI -> Primary assigns `seq` and replicates to backups -> returns receipt with processing node AND primary node ID.
+    - `SYNCHRONOUS` mode: Primary confirms only after all live backups acknowledge; rejection if required backup fails.
+    - `ASYNCHRONOUS` mode: Confirms immediately, replicates in background after configurable delay.
+    - Deterministic SHA-256 ledger hashing over non-isolated records sorted by canonical sequence number.
+    - Cluster consistency checker comparing hashes and counts across all active nodes.
+    - Deterministic stale-read demonstration (`POST /api/repl/stale-read-demo`): immediate read shows backup lag, post-delay read shows eventual consistency.
+  - Implemented Fault Tolerance (`NodeRegistry`):
+    - Heartbeat failure detection (2s interval, 6s timeout).
+    - Automatic Bully election triggered when heartbeat detects primary failure.
+    - Simulated crash toggle (`POST /api/ft/crash`, `POST /api/ft/resume`): node stops answering RMI and heartbeats while JVM remains running.
+    - Snapshot rejoin (`POST /api/ft/sync`): restarted or resumed nodes retrieve full non-isolated snapshot from primary and rebuild local database.
+  - Added Web Dashboard UI Tabs:
+    - Exp 4: Bully Election tab (trigger button, status cards, algorithm guide, message trace box).
+    - Exp 5: Replication tab (mode toggle, delay input, stale-read demo, consistency check table, and mandatory failure-assumption help text).
+    - Exp 8: Fault Tolerance tab (local node state, simulate crash & resume buttons, manual snapshot sync, heartbeat telemetry table).
+  - Created End-to-End Test Suite: `test-p3-e2e.ps1`, `test-p3-e2e.bat`, and `test-p3-e2e.sh`.
+    - Check (1): Cross-node RMI routing verified (Gateway 1 -> Processing Node 2 -> Primary 3).
+    - Check (2): Synchronous replication consistency verified (identical SHA-256 ledger hash across all 3 nodes).
+    - Check (3): Primary process kill -> heartbeat timeout (>6s) -> Bully election failover to Node 2 -> post-failover write confirmed -> pre-kill confirmed donation intact in ledger.
+    - Gate 2 MET.
+
 ## Tests Passing
 - `com.dms.DmsApplicationTests`: Spring Boot context initialization passed.
 - `com.dms.LoadBalancerTest`:
@@ -45,20 +72,34 @@
   - `testRmiLookupAndPing`: Passed.
   - `testProcessValidDonation`: Passed.
   - `testValidationRejection`: Passed.
-- `test-p2-load-balancer.bat` (3 local nodes on ports 8080, 8081, 8082):
-  - Round Robin test passed with 12 requests distributed 4, 4, 4.
-  - Least Connections test passed with 12 overlapping requests distributed 4, 4, 4.
+- `com.dms.ElectionAndReplicationTest`:
+  - `testBullyElectionBasicContract`: Passed.
+  - `testReplicationModeAndDelayConfiguration`: Passed.
+  - `testLedgerHashConsistency`: Passed (SHA-256 deterministic 64-char hex hash).
+  - `testSimulatedCrashRejectsRmiCalls`: Passed.
+  - `testReplicatePreservesSequenceAndReceipt`: Passed.
+- `test-p3-e2e.bat` / `test-p3-e2e.ps1` (3 local nodes on ports 8080, 8081, 8082):
+  - Check 1 (Cross-node RMI routing) Passed.
+  - Check 2 (Synchronous replication consistency) Passed.
+  - Check 3 (Primary process kill, Bully election failover, and pre-kill confirmed donation persistence) Passed.
+- `test-p2-load-balancer.bat`:
+  - Regression re-run passed (Round Robin 4, 4, 4; Least Connections 4, 4, 4).
 - `smoke-two-machine.bat --local`:
-  - Re-run passed: cross-node RMI routing, receipt fields, and assertions verified.
+  - Regression re-run passed (cross-node RMI, receipt fields, NGO query).
 
 ## Decisions Made
 1. **In-Flight Connection Tracking**: Built an `InFlightHandle` in `LoadBalancingService` so the gateway tracks concurrent requests in-flight to each candidate node. This ensures `Least Connections` makes instantaneous, optimal distribution decisions for concurrent requests before heartbeat intervals.
 2. **Artificial Delay**: Supported both global node delay (`POST /api/lb/delay`) and per-request delay (`DonationRequest.delayMs`), applied during `RemoteDonationServiceImpl.process()` while `activeConnections` is incremented.
 3. **Demo Isolation**: Burst requests generated by Exp 6 use `isolated = true` per SPEC Section 3, ensuring demo bursts do not contaminate regular ledger consistency checks.
 4. **H2 AUTO_SERVER**: Added `AUTO_SERVER=TRUE` to JDBC URL to ensure multi-connection resilience and prevent connection lock issues during multi-node concurrent executions.
+5. **Canonical Distributed Ledger Hashing**: Computed SHA-256 over records ordered by canonical primary sequence number (`seq`), hashing `seq:donor:amount:branch:receiptId`. This eliminates sensitivity to local auto-increment primary key discrepancies across nodes.
+6. **Replication & Snapshot Rejoin Persistence**: Sanitized transient entity primary keys on backup replication and snapshot rejoin (`saveAll`), allowing JPA/Hibernate to insert clean records with local database keys without detached entity merge conflicts.
+7. **Receipt Tracking**: Added `receiptId` getter and populated constructor to `Receipt` to allow client-side tracking and assertion of individual donation receipts without altering mandatory fixed contract fields.
+8. **Deterministic Stale-Read Demo**: Implemented dedicated endpoint `POST /api/repl/stale-read-demo` and UI action demonstrating step 1 (immediate read on backup - stale data observed) and step 2 (post-delay read - eventual consistency achieved).
+9. **Primary Process Kill**: Used TCP port binding process lookup in PowerShell to cleanly terminate the JVM process running the primary node, accurately testing heartbeat timeout (>6s) and Bully election failover.
 
 ## Known Bugs
 None.
 
 ## Exact Next Step
-Phase P3: Bully election (Exp 4), Replication (Exp 5), and Fault tolerance with primary-backup (Exp 8). Election algorithm interface + Bully; write path with sync/async modes; ledger hash and consistency check; stale-read demo; heartbeat failure detection; simulate crash and real kill; failover; snapshot rejoin; end-to-end test script.
+Phase P4: Exps 2, 3, 7 (multithreading, thread pool burst, barrier race demo; Clocks with Lamport and Berkeley-style skew correction; MapReduce with sharding and SQL verification; check 4 in end-to-end script).

@@ -13,6 +13,10 @@ public interface DonationRepository extends JpaRepository<Donation, Long> {
 
     List<Donation> findByIsolatedFalseOrderByIdAsc();
 
+    List<Donation> findByIsolatedFalseOrderBySeqAsc();
+
+    java.util.Optional<Donation> findByReceiptId(String receiptId);
+
     List<Donation> findByBranchAndIsolatedFalse(String branch);
 
     @Query("SELECT COALESCE(SUM(d.amount), 0) FROM Donation d WHERE LOWER(d.branch) = LOWER(:branch) AND d.isolated = false")

@@ -13,12 +13,18 @@ public class Receipt implements Serializable {
     private int primaryId;
     private String status;
     private String message;
+    private String receiptId;
 
     public Receipt() {
     }
 
     public Receipt(int processingNodeId, String host, String os, String threadName,
                    long lamportTs, int primaryId, String status, String message) {
+        this(processingNodeId, host, os, threadName, lamportTs, primaryId, status, message, null);
+    }
+
+    public Receipt(int processingNodeId, String host, String os, String threadName,
+                   long lamportTs, int primaryId, String status, String message, String receiptId) {
         this.processingNodeId = processingNodeId;
         this.host = host;
         this.os = os;
@@ -27,6 +33,15 @@ public class Receipt implements Serializable {
         this.primaryId = primaryId;
         this.status = status;
         this.message = message;
+        this.receiptId = receiptId;
+    }
+
+    public String getReceiptId() {
+        return receiptId;
+    }
+
+    public void setReceiptId(String receiptId) {
+        this.receiptId = receiptId;
     }
 
     public int getProcessingNodeId() {

@@ -28,12 +28,12 @@
     <button class="tab-btn active" data-tab="tab-cluster">Cluster Topology</button>
     <button class="tab-btn" data-tab="tab-exp1">Exp 1: Java RMI</button>
     <button class="tab-btn" data-tab="tab-exp6">Exp 6: Load Balancing</button>
+    <button class="tab-btn" data-tab="tab-exp4">Exp 4: Bully Election</button>
+    <button class="tab-btn" data-tab="tab-exp5">Exp 5: Replication</button>
+    <button class="tab-btn" data-tab="tab-exp8">Exp 8: Fault Tolerance</button>
     <button class="tab-btn disabled" title="Unlocks in Phase 4">Exp 2: Multithreading (P4)</button>
     <button class="tab-btn disabled" title="Unlocks in Phase 4">Exp 3: Clocks (P4)</button>
-    <button class="tab-btn disabled" title="Unlocks in Phase 3">Exp 4: Election (P3)</button>
-    <button class="tab-btn disabled" title="Unlocks in Phase 3">Exp 5: Replication (P3)</button>
     <button class="tab-btn disabled" title="Unlocks in Phase 4">Exp 7: MapReduce (P4)</button>
-    <button class="tab-btn disabled" title="Unlocks in Phase 3">Exp 8: Fault Tolerance (P3)</button>
     <button class="tab-btn disabled" title="Unlocks in Phase 5">Exp 9: MPI Collectives (P5)</button>
     <button class="tab-btn disabled" title="Unlocks in Phase 5">Exp 10: Matrix Mult (P5)</button>
   </nav>
@@ -282,6 +282,218 @@
             <tr><td colspan="9" style="text-align:center;">No burst requests sent yet. Click "Send 12 Requests" above.</td></tr>
           </tbody>
         </table>
+      </div>
+    </section>
+
+    <!-- EXP 4: BULLY ELECTION TAB -->
+    <section id="tab-exp4" class="tab-pane">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">Bully Election Algorithm (Exp 4)</h2>
+            <div class="card-desc">Coordinator election among active nodes: node with highest ID bullies smaller IDs and assumes Primary leadership</div>
+          </div>
+          <button class="btn-primary" id="btn-trigger-election">Trigger Bully Election</button>
+        </div>
+
+        <div class="grid-2">
+          <div class="card" style="margin: 0; background: #0f172a; border-color: rgba(255,255,255,0.06);">
+            <h3 style="font-size: 0.9rem; color: var(--accent-blue);">Current Election Status</h3>
+            <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.5rem; font-size: 0.85rem;">
+              <div><strong>Algorithm:</strong> <span class="badge badge-primary">BULLY</span></div>
+              <div><strong>Current Primary (Coordinator):</strong> <span class="badge badge-green" id="election-coord-badge">Node ?</span></div>
+              <div><strong>Local Node ID:</strong> <span class="badge" id="election-local-badge">Node ?</span></div>
+              <div><strong>Role:</strong> <span id="election-role-text">Checking...</span></div>
+            </div>
+          </div>
+
+          <div class="card" style="margin: 0; background: #0f172a; border-color: rgba(255,255,255,0.06);">
+            <h3 style="font-size: 0.9rem; color: var(--accent-blue);">How Bully Election Works</h3>
+            <ol style="margin-left: 1.25rem; font-size: 0.8rem; color: var(--text-muted); display: flex; flex-direction: column; gap: 0.35rem; margin-top: 0.5rem;">
+              <li>Node P contacts all known nodes with higher IDs (<code style="color:var(--accent-amber)">electionMsg</code>).</li>
+              <li>If no higher node answers, P wins, becomes Primary, and broadcasts <code style="color:var(--accent-green)">coordinatorMsg</code> to all peers.</li>
+              <li>If a higher node Q answers <code style="color:var(--accent-blue)">OK</code>, Q starts its own election and P waits for announcement.</li>
+              <li>Highest active node ID in cluster is always the elected Primary coordinator.</li>
+            </ol>
+          </div>
+        </div>
+
+        <div class="card" style="margin: 0; background: #030712; border-color: rgba(255,255,255,0.06);">
+          <div class="card-header" style="border: none; padding-bottom: 0;">
+            <h3 style="font-size: 0.85rem; color: var(--text-muted);">Election Message Activity & Trace</h3>
+            <button class="btn-secondary" id="btn-refresh-election">Refresh Status</button>
+          </div>
+          <div id="election-trace-box" style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-main); min-height: 80px; padding: 0.5rem 0;">
+            Waiting for election event...
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- EXP 5: REPLICATION TAB -->
+    <section id="tab-exp5" class="tab-pane">
+      <!-- MANDATORY FAILURE ASSUMPTION HELP TEXT PER SPEC EXP 5 -->
+      <div class="alert-box">
+        <strong>Failure Assumptions & Consistency Guarantees:</strong>
+        Crash-stop failures only, at most one failure at a time, no network partitions, failure detection by heartbeat timeout.
+        Under these assumptions no confirmed synchronous donation is lost on failover.
+        <em>Note: This is NOT a general guarantee (network partitions, simultaneous failures, and split-brain break it).</em>
+      </div>
+
+      <div class="grid-2">
+        <!-- Replication Mode Configuration -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Replication Mode & Delay</h2>
+              <div class="card-desc">Write path: Gateway -> Processing Node -> Primary Commit -> Replicate to Backups</div>
+            </div>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 1rem;">
+            <div class="form-group">
+              <label>Replication Mode</label>
+              <div style="display: flex; gap: 1.5rem; margin-top: 0.25rem;">
+                <label style="display:flex; align-items:center; gap:0.4rem; cursor:pointer;">
+                  <input type="radio" name="repl-mode-radio" value="SYNCHRONOUS" checked>
+                  <span><strong>SYNCHRONOUS</strong> (Requires all live backups ACK before confirming)</span>
+                </label>
+              </div>
+              <div style="display: flex; gap: 1.5rem; margin-top: 0.25rem;">
+                <label style="display:flex; align-items:center; gap:0.4rem; cursor:pointer;">
+                  <input type="radio" name="repl-mode-radio" value="ASYNCHRONOUS">
+                  <span><strong>ASYNCHRONOUS</strong> (Confirms immediately, replicates in background)</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="input-repl-delay">Async Background Replication Delay (ms)</label>
+              <div style="display: flex; gap: 0.5rem;">
+                <input type="number" id="input-repl-delay" min="0" max="10000" step="500" value="2000" style="width: 140px;">
+                <button class="btn-primary" id="btn-set-repl-delay">Set Delay</button>
+              </div>
+              <div style="font-size: 0.75rem; color: var(--text-muted);">Simulates replication lag to observe stale reads deterministically.</div>
+            </div>
+
+            <div style="border-top: 1px solid rgba(255,255,255,0.08); padding-top: 0.85rem;">
+              <h3 style="font-size: 0.85rem; color: var(--accent-amber); margin-bottom: 0.4rem;">Deterministic Stale-Read Demo</h3>
+              <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.6rem;">
+                Submits an async donation to Primary, executes an immediate read on a Backup (stale read observed!), then re-reads after delay (eventual consistency confirmed).
+              </p>
+              <button class="btn-primary" id="btn-run-stale-demo" style="background:#d97706;">Run Stale-Read Demo</button>
+              <div id="stale-demo-result" style="margin-top: 0.6rem; font-size: 0.8rem; display: none;"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Ledger Consistency Check -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Ledger Consistency Check</h2>
+              <div class="card-desc">Cluster-wide verification comparing SHA-256 ledger hashes across all active nodes</div>
+            </div>
+            <button class="btn-primary" id="btn-run-consistency">Check Consistency</button>
+          </div>
+
+          <div id="consistency-summary-box" style="display: flex; align-items: center; justify-content: space-between; padding: 0.6rem 0.8rem; background: #0f172a; border-radius: 4px; border: 1px solid var(--border-color);">
+            <div>
+              <span style="font-size: 0.8rem; color: var(--text-muted);">Cluster Status:</span>
+              <span id="cluster-consistency-badge" class="badge badge-green" style="margin-left: 0.5rem;">CONSISTENT</span>
+            </div>
+            <div style="font-size: 0.75rem; color: var(--text-muted);">
+              Ref Hash: <span id="consistency-ref-hash" class="code-hash">Checking...</span>
+            </div>
+          </div>
+
+          <table class="data-table" id="consistency-table">
+            <thead>
+              <tr>
+                <th>Node ID</th>
+                <th>Host IP</th>
+                <th>Role</th>
+                <th>Donations</th>
+                <th>SHA-256 Ledger Hash</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="consistency-tbody">
+              <tr><td colspan="6" style="text-align:center;">Click "Check Consistency" to verify hashes across nodes.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- EXP 8: FAULT TOLERANCE TAB -->
+    <section id="tab-exp8" class="tab-pane">
+      <div class="grid-2">
+        <!-- Crash & Recovery Simulation -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Node Crash & Failover Simulation</h2>
+              <div class="card-desc">Simulate crash-stop failure or test real process termination failover</div>
+            </div>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 1rem;">
+            <div style="display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem; background: #0f172a; border-radius: 4px; border: 1px solid var(--border-color);">
+              <div>
+                <div style="font-size: 0.8rem; color: var(--text-muted);">Local Node State:</div>
+                <div style="font-size: 1rem; font-weight: 700; color: var(--accent-green); margin-top: 0.2rem;" id="ft-local-status">HEALTHY / RUNNING</div>
+              </div>
+              <div id="ft-local-badge-role" class="badge badge-primary">Node ?</div>
+            </div>
+
+            <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+              <button class="btn-danger" id="btn-ft-crash">Simulate Crash (Stop RMI)</button>
+              <button class="btn-success" id="btn-ft-resume">Resume Node & Snapshot Rejoin</button>
+            </div>
+
+            <div class="alert-box alert-amber" style="font-size: 0.8rem;">
+              <strong>Simulated Crash vs Real Process Kill:</strong>
+              <ul style="margin-left: 1.25rem; margin-top: 0.3rem;">
+                <li><strong>Simulated Crash:</strong> Node ceases outbound heartbeats and throws RemoteException on all inbound RMI calls while JVM stays alive.</li>
+                <li><strong>Real Process Kill:</strong> Terminate JVM with <code>taskkill /F /PID &lt;pid&gt;</code> or <code>kill -9 &lt;pid&gt;</code>. Heartbeat timeout (&gt; 6s) triggers Bully election failover.</li>
+                <li><strong>Snapshot Rejoin:</strong> When node resumes or restarts, it retrieves a full snapshot from the Primary via RMI and rebuilds its local ledger.</li>
+              </ul>
+            </div>
+
+            <div style="border-top: 1px solid rgba(255,255,255,0.08); padding-top: 0.75rem;">
+              <button class="btn-secondary" id="btn-ft-manual-sync">Manual Full Snapshot Sync from Primary</button>
+              <span id="ft-sync-result" style="margin-left: 0.5rem; font-size: 0.8rem; color: var(--accent-blue);"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Heartbeat Monitor & Cluster Health -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Heartbeat Failure Detection Monitor</h2>
+              <div class="card-desc">Heartbeat every 2s | Failure timeout 6s | Automatic Bully election on Primary failure</div>
+            </div>
+            <button class="btn-secondary" id="btn-refresh-ft">Refresh Health</button>
+          </div>
+
+          <table class="data-table" id="ft-monitor-table">
+            <thead>
+              <tr>
+                <th>Node ID</th>
+                <th>Host IP</th>
+                <th>Role</th>
+                <th>Health Status</th>
+                <th>Active Conns</th>
+                <th>Failure Detection</th>
+              </tr>
+            </thead>
+            <tbody id="ft-monitor-tbody">
+              <tr><td colspan="6" style="text-align:center;">Loading heartbeat telemetry...</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </section>
 

@@ -10,11 +10,16 @@ document.addEventListener("DOMContentLoaded", () => {
   fetchCluster();
   fetchLedger();
   fetchLbConfig();
+  fetchElectionStatus();
+  fetchReplConfig();
+  fetchFtStatus();
 
   // Periodic refresh
   setInterval(fetchCluster, 3000);
   setInterval(fetchLedger, 5000);
   setInterval(fetchLbConfig, 2000);
+  setInterval(fetchElectionStatus, 3000);
+  setInterval(fetchFtStatus, 3000);
 
   // Event Listeners
   document.getElementById("btn-refresh-cluster").addEventListener("click", fetchCluster);
@@ -40,6 +45,33 @@ document.addEventListener("DOMContentLoaded", () => {
     const val = e.target.value;
     document.getElementById("btn-send-burst").textContent = `Send ${val} Requests`;
   });
+
+  // Exp 4 Election Listeners
+  const btnElection = document.getElementById("btn-trigger-election");
+  if (btnElection) btnElection.addEventListener("click", handleTriggerElection);
+  const btnRefreshElection = document.getElementById("btn-refresh-election");
+  if (btnRefreshElection) btnRefreshElection.addEventListener("click", fetchElectionStatus);
+
+  // Exp 5 Replication Listeners
+  document.querySelectorAll('input[name="repl-mode-radio"]').forEach(r => {
+    r.addEventListener("change", handleReplModeChange);
+  });
+  const btnSetReplDelay = document.getElementById("btn-set-repl-delay");
+  if (btnSetReplDelay) btnSetReplDelay.addEventListener("click", handleSetReplDelay);
+  const btnRunStaleDemo = document.getElementById("btn-run-stale-demo");
+  if (btnRunStaleDemo) btnRunStaleDemo.addEventListener("click", handleRunStaleDemo);
+  const btnRunConsistency = document.getElementById("btn-run-consistency");
+  if (btnRunConsistency) btnRunConsistency.addEventListener("click", fetchConsistency);
+
+  // Exp 8 Fault Tolerance Listeners
+  const btnFtCrash = document.getElementById("btn-ft-crash");
+  if (btnFtCrash) btnFtCrash.addEventListener("click", handleSimulateCrash);
+  const btnFtResume = document.getElementById("btn-ft-resume");
+  if (btnFtResume) btnFtResume.addEventListener("click", handleResumeNode);
+  const btnFtManualSync = document.getElementById("btn-ft-manual-sync");
+  if (btnFtManualSync) btnFtManualSync.addEventListener("click", handleManualSnapshotSync);
+  const btnRefreshFt = document.getElementById("btn-refresh-ft");
+  if (btnRefreshFt) btnRefreshFt.addEventListener("click", fetchFtStatus);
 });
 
 // TAB NAVIGATION
@@ -330,6 +362,20 @@ function appendLogLine(event) {
   if (document.getElementById("log-autoscroll").checked) {
     logWindow.scrollTop = logWindow.scrollHeight;
   }
+
+  // Also route EXP4-ELECT to Bully election trace box
+  if (event.tag === "EXP4-ELECT") {
+    const traceBox = document.getElementById("election-trace-box");
+    if (traceBox) {
+      if (traceBox.textContent.includes("Waiting for election event...")) {
+        traceBox.innerHTML = "";
+      }
+      const div = document.createElement("div");
+      div.innerHTML = `<span style="color:var(--accent-amber); font-weight:600;">[EXP4-ELECT]</span> <span style="color:#64748b;">lamport=${event.lamportTs}</span> ${escapeHtml(event.message)}`;
+      traceBox.appendChild(div);
+      traceBox.scrollTop = traceBox.scrollHeight;
+    }
+  }
 }
 
 function renderFilteredLogs() {
@@ -528,4 +574,311 @@ function renderLbResults(data) {
     `;
     tbody.appendChild(tr);
   });
+}
+
+// =============================================================
+// EXP 4: BULLY ELECTION
+// =============================================================
+async function fetchElectionStatus() {
+  try {
+    const res = await fetch("/api/election/status");
+    if (!res.ok) return;
+    const data = await res.json();
+    const isCoord = data.coordinatorId === data.localId;
+    const coordBadge = document.getElementById("election-coord-badge");
+    const localBadge = document.getElementById("election-local-badge");
+    const roleText = document.getElementById("election-role-text");
+
+    if (coordBadge) {
+      coordBadge.textContent = `Node ${data.coordinatorId}`;
+      coordBadge.className = isCoord ? "badge badge-primary" : "badge badge-green";
+    }
+    if (localBadge) {
+      localBadge.textContent = `Node ${data.localId}`;
+    }
+    if (roleText) {
+      roleText.innerHTML = isCoord
+        ? `<strong style="color:var(--accent-blue)">PRIMARY COORDINATOR (Highest active ID)</strong>`
+        : `<strong style="color:var(--accent-green)">BACKUP NODE (Reports to Primary Node ${data.coordinatorId})</strong>`;
+    }
+  } catch (err) {
+    console.error("Failed to fetch election status", err);
+  }
+}
+
+async function handleTriggerElection() {
+  const btn = document.getElementById("btn-trigger-election");
+  btn.disabled = true;
+  btn.textContent = "Running Bully Election...";
+  try {
+    const res = await fetch("/api/election/start", { method: "POST" });
+    const data = await res.json();
+    const traceBox = document.getElementById("election-trace-box");
+    if (traceBox) {
+      traceBox.innerHTML = `<div>[${new Date().toLocaleTimeString()}] Election started by Node ${data.initiatorNodeId} (Algorithm: ${data.algorithm})...</div>`;
+    }
+    setTimeout(fetchElectionStatus, 2000);
+    setTimeout(fetchCluster, 2000);
+  } catch (err) {
+    alert("Election trigger failed: " + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Trigger Bully Election";
+  }
+}
+
+// =============================================================
+// EXP 5: REPLICATION & CONSISTENCY
+// =============================================================
+async function fetchReplConfig() {
+  try {
+    const res = await fetch("/api/repl/config");
+    if (!res.ok) return;
+    const data = await res.json();
+    const radios = document.querySelectorAll('input[name="repl-mode-radio"]');
+    radios.forEach(r => {
+      if (r.value === data.mode) r.checked = true;
+    });
+    const delayInput = document.getElementById("input-repl-delay");
+    if (delayInput && !delayInput.matches(":focus")) {
+      delayInput.value = data.delayMs;
+    }
+  } catch (err) {
+    console.error("Failed to fetch repl config", err);
+  }
+}
+
+async function handleReplModeChange(e) {
+  const mode = e.target.value;
+  try {
+    await fetch("/api/repl/mode", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode })
+    });
+    fetchReplConfig();
+  } catch (err) {
+    alert("Failed to update replication mode: " + err.message);
+  }
+}
+
+async function handleSetReplDelay() {
+  const delayMs = parseInt(document.getElementById("input-repl-delay").value, 10);
+  const btn = document.getElementById("btn-set-repl-delay");
+  btn.disabled = true;
+  try {
+    await fetch("/api/repl/delay", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ delayMs })
+    });
+    fetchReplConfig();
+  } catch (err) {
+    alert("Failed to set replication delay: " + err.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function handleRunStaleDemo() {
+  const btn = document.getElementById("btn-run-stale-demo");
+  const resultDiv = document.getElementById("stale-demo-result");
+  const delayMs = parseInt(document.getElementById("input-repl-delay").value, 10) || 2000;
+  btn.disabled = true;
+  btn.textContent = "Running Stale-Read Demo...";
+  resultDiv.style.display = "block";
+  resultDiv.innerHTML = `<div class="alert-box alert-amber">Step 1: Submitting async donation to Primary and testing immediate read on Backup...</div>`;
+
+  try {
+    const res = await fetch(`/api/repl/stale-read-demo?delayMs=${delayMs}`, { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) {
+      resultDiv.innerHTML = `<div class="alert-box alert-red">Demo Error: ${escapeHtml(data.error || "Execution failed")}</div>`;
+      return;
+    }
+
+    resultDiv.innerHTML = `
+      <div class="alert-box ${data.staleReadObserved ? '' : 'alert-amber'}">
+        <div style="font-weight:700; margin-bottom:0.4rem; color:var(--accent-blue);">
+          ✓ Deterministic Stale-Read Demonstration Complete (Receipt: ${escapeHtml(data.receiptId)})
+        </div>
+        <div style="display:flex; flex-direction:column; gap:0.25rem; font-size:0.8rem;">
+          <div>• <strong>Step 1 (Immediate Read):</strong> Backup Node ${data.backupNodeId} count = <code>${data.immediateBackupCount}</code> <span class="badge badge-amber">STALE READ OBSERVED</span></div>
+          <div>• <strong>Step 2 (Post-Delay Read after ${data.delayMs}ms):</strong> Backup Node ${data.backupNodeId} count = <code>${data.eventualBackupCount}</code> <span class="badge badge-green">EVENTUALLY CONSISTENT</span></div>
+          <div style="margin-top:0.3rem; color:var(--text-muted);">${escapeHtml(data.explanation)}</div>
+        </div>
+      </div>
+    `;
+    fetchLedger();
+    fetchConsistency();
+  } catch (err) {
+    resultDiv.innerHTML = `<div class="alert-box alert-red">Error running demo: ${escapeHtml(err.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Run Stale-Read Demo";
+  }
+}
+
+async function fetchConsistency() {
+  const btn = document.getElementById("btn-run-consistency");
+  btn.disabled = true;
+  btn.textContent = "Checking...";
+  try {
+    const res = await fetch("/api/repl/consistency");
+    if (!res.ok) return;
+    const data = await res.json();
+
+    const badge = document.getElementById("cluster-consistency-badge");
+    if (badge) {
+      if (data.consistent) {
+        badge.textContent = "ALL NODES CONSISTENT";
+        badge.className = "badge badge-green";
+      } else {
+        badge.textContent = "INCONSISTENT / DRIFT";
+        badge.className = "badge badge-red";
+      }
+    }
+
+    const refElem = document.getElementById("consistency-ref-hash");
+    if (refElem) {
+      refElem.textContent = data.referenceHash ? data.referenceHash.substring(0, 16) + "..." : "N/A";
+      refElem.title = data.referenceHash || "";
+    }
+
+    const tbody = document.getElementById("consistency-tbody");
+    tbody.innerHTML = "";
+
+    (data.nodes || []).forEach(node => {
+      const tr = document.createElement("tr");
+      const matchBadge = node.match
+        ? `<span class="badge badge-green">MATCH</span>`
+        : `<span class="badge badge-red">MISMATCH</span>`;
+      const roleBadge = node.role === "PRIMARY"
+        ? `<span class="badge badge-primary">PRIMARY</span>`
+        : `<span class="badge badge-green">BACKUP</span>`;
+
+      tr.innerHTML = `
+        <td><strong>Node ${node.nodeId}</strong></td>
+        <td>${escapeHtml(node.host || 'N/A')}</td>
+        <td>${roleBadge}</td>
+        <td>${node.count >= 0 ? node.count : 'N/A'}</td>
+        <td><span class="code-hash" title="${escapeHtml(node.hash)}">${escapeHtml(node.hash ? node.hash.substring(0, 20) + '...' : 'N/A')}</span></td>
+        <td>${matchBadge}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  } catch (err) {
+    console.error("Consistency check failed", err);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Check Consistency";
+  }
+}
+
+// =============================================================
+// EXP 8: FAULT TOLERANCE
+// =============================================================
+async function fetchFtStatus() {
+  try {
+    const res = await fetch("/api/ft/status");
+    if (!res.ok) return;
+    const data = await res.json();
+
+    const statusElem = document.getElementById("ft-local-status");
+    const roleElem = document.getElementById("ft-local-badge-role");
+    if (statusElem) {
+      if (data.simulatedCrash) {
+        statusElem.textContent = "SIMULATED CRASH (RMI Stopped)";
+        statusElem.style.color = "var(--accent-red)";
+      } else {
+        statusElem.textContent = "HEALTHY / RUNNING";
+        statusElem.style.color = "var(--accent-green)";
+      }
+    }
+    if (roleElem) {
+      roleElem.textContent = data.isPrimary ? `Node ${data.nodeId} (PRIMARY)` : `Node ${data.nodeId} (BACKUP)`;
+      roleElem.className = data.isPrimary ? "badge badge-primary" : "badge badge-green";
+    }
+
+    // Render FT Heartbeat table
+    renderFtMonitorTable();
+  } catch (err) {
+    console.error("Failed to fetch FT status", err);
+  }
+}
+
+function renderFtMonitorTable() {
+  const tbody = document.getElementById("ft-monitor-tbody");
+  if (!tbody) return;
+  tbody.innerHTML = "";
+
+  if (clusterNodes.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;">No peers configured.</td></tr>`;
+    return;
+  }
+
+  clusterNodes.forEach(node => {
+    const tr = document.createElement("tr");
+    const isPrimary = localNode && node.nodeId === localNode.coordinatorId;
+    const isSelf = localNode && node.nodeId === localNode.nodeId;
+
+    const healthBadge = node.alive
+      ? `<span class="badge badge-green">HEALTHY (Alive)</span>`
+      : `<span class="badge badge-red">DEAD (Timeout &gt; 6s)</span>`;
+
+    const failoverStatus = !node.alive && isPrimary
+      ? `<strong style="color:var(--accent-red)">TRIGGERED BULLY ELECTION</strong>`
+      : (node.alive ? `Active Heartbeat (every 2s)` : `Failure suspected`);
+
+    tr.innerHTML = `
+      <td><strong>Node ${node.nodeId}</strong> ${isSelf ? '<span class="badge badge-primary">Self</span>' : ''}</td>
+      <td>${node.host}:${node.serverPort}</td>
+      <td>${isPrimary ? '<span class="badge badge-primary">PRIMARY</span>' : '<span class="badge badge-green">BACKUP</span>'}</td>
+      <td>${healthBadge}</td>
+      <td>${node.activeConnections || 0}</td>
+      <td><span style="font-size:0.75rem;">${failoverStatus}</span></td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+async function handleSimulateCrash() {
+  if (!confirm("Are you sure you want to simulate a crash on this node? It will stop answering RMI calls and heartbeats.")) return;
+  try {
+    const res = await fetch("/api/ft/crash", { method: "POST" });
+    const data = await res.json();
+    alert(data.message);
+    fetchFtStatus();
+    fetchCluster();
+  } catch (err) {
+    alert("Simulate crash error: " + err.message);
+  }
+}
+
+async function handleResumeNode() {
+  try {
+    const res = await fetch("/api/ft/resume", { method: "POST" });
+    const data = await res.json();
+    alert(data.message);
+    fetchFtStatus();
+    fetchCluster();
+    fetchLedger();
+  } catch (err) {
+    alert("Resume error: " + err.message);
+  }
+}
+
+async function handleManualSnapshotSync() {
+  const btn = document.getElementById("btn-ft-manual-sync");
+  btn.disabled = true;
+  try {
+    const res = await fetch("/api/ft/sync", { method: "POST" });
+    const data = await res.json();
+    document.getElementById("ft-sync-result").textContent = `Synchronized ${data.syncedDonations} donations from Primary Node ${data.primaryId}`;
+    fetchLedger();
+  } catch (err) {
+    alert("Manual sync failed: " + err.message);
+  } finally {
+    btn.disabled = false;
+  }
 }

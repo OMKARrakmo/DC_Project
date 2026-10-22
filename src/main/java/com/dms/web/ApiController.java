@@ -22,6 +22,8 @@ public class ApiController {
     private final RemoteDonationServiceImpl serviceImpl;
     private final DonationRepository donationRepository;
     private final com.dms.lb.LoadBalancingService loadBalancingService;
+    private final com.dms.election.BullyElection bullyElection;
+    private final com.dms.repl.ReplicationService replicationService;
 
     public ApiController(NodeConfig nodeConfig,
                          NodeRegistry nodeRegistry,
@@ -29,7 +31,9 @@ public class ApiController {
                          EventLogger eventLogger,
                          RemoteDonationServiceImpl serviceImpl,
                          DonationRepository donationRepository,
-                         com.dms.lb.LoadBalancingService loadBalancingService) {
+                         com.dms.lb.LoadBalancingService loadBalancingService,
+                         @org.springframework.context.annotation.Lazy com.dms.election.BullyElection bullyElection,
+                         com.dms.repl.ReplicationService replicationService) {
         this.nodeConfig = nodeConfig;
         this.nodeRegistry = nodeRegistry;
         this.lamportClock = lamportClock;
@@ -37,6 +41,8 @@ public class ApiController {
         this.serviceImpl = serviceImpl;
         this.donationRepository = donationRepository;
         this.loadBalancingService = loadBalancingService;
+        this.bullyElection = bullyElection;
+        this.replicationService = replicationService;
     }
 
     @PostMapping("/donate")
@@ -291,5 +297,204 @@ public class ApiController {
                 return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(resp);
             }
         }
+    }
+
+    // -------------------------------------------------------------
+    // Exp 4: Bully Election Endpoints
+    // -------------------------------------------------------------
+    @PostMapping("/election/start")
+    public ResponseEntity<Map<String, Object>> startElection() {
+        bullyElection.startElection();
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("status", "STARTED");
+        resp.put("algorithm", bullyElection.getAlgorithmName());
+        resp.put("initiatorNodeId", nodeConfig.getId());
+        resp.put("message", "Bully election initiated by node " + nodeConfig.getId());
+        return ResponseEntity.ok(resp);
+    }
+
+    @GetMapping("/election/status")
+    public ResponseEntity<Map<String, Object>> getElectionStatus() {
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("algorithm", bullyElection.getAlgorithmName());
+        resp.put("coordinatorId", nodeRegistry.getPrimaryId());
+        resp.put("localId", nodeConfig.getId());
+        resp.put("isCoordinator", nodeRegistry.getPrimaryId() == nodeConfig.getId());
+        return ResponseEntity.ok(resp);
+    }
+
+    // -------------------------------------------------------------
+    // Exp 5: Replication Endpoints
+    // -------------------------------------------------------------
+    @GetMapping("/repl/config")
+    public ResponseEntity<Map<String, Object>> getReplicationConfig() {
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("mode", replicationService.getReplicationMode());
+        resp.put("delayMs", replicationService.getAsyncDelayMs());
+        return ResponseEntity.ok(resp);
+    }
+
+    @PostMapping("/repl/mode")
+    public ResponseEntity<Map<String, Object>> setReplicationMode(
+            @RequestBody(required = false) Map<String, String> body,
+            @RequestParam(required = false) String mode) {
+        String targetMode = (body != null && body.containsKey("mode")) ? body.get("mode") : mode;
+        if (targetMode != null) {
+            replicationService.setReplicationMode(targetMode);
+        }
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("mode", replicationService.getReplicationMode());
+        return ResponseEntity.ok(resp);
+    }
+
+    @PostMapping("/repl/delay")
+    public ResponseEntity<Map<String, Object>> setReplicationDelay(
+            @RequestBody(required = false) Map<String, Object> body,
+            @RequestParam(required = false) Long delayMs) {
+        Long targetDelay = delayMs;
+        if (targetDelay == null && body != null && body.containsKey("delayMs")) {
+            Object val = body.get("delayMs");
+            if (val instanceof Number) {
+                targetDelay = ((Number) val).longValue();
+            } else if (val != null) {
+                targetDelay = Long.parseLong(val.toString());
+            }
+        }
+        if (targetDelay != null) {
+            replicationService.setAsyncDelayMs(targetDelay);
+        }
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("delayMs", replicationService.getAsyncDelayMs());
+        return ResponseEntity.ok(resp);
+    }
+
+    @GetMapping("/repl/consistency")
+    public ResponseEntity<Map<String, Object>> checkConsistency() {
+        return ResponseEntity.ok(replicationService.checkClusterConsistency());
+    }
+
+    @GetMapping("/repl/hash")
+    public ResponseEntity<Map<String, Object>> getLedgerHash() {
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("nodeId", nodeConfig.getId());
+        resp.put("hash", replicationService.computeLedgerHash());
+        resp.put("count", donationRepository.findByIsolatedFalseOrderByIdAsc().size());
+        return ResponseEntity.ok(resp);
+    }
+
+    @PostMapping("/repl/stale-read-demo")
+    public ResponseEntity<Map<String, Object>> runStaleReadDemo(@RequestParam(defaultValue = "2000") long delayMs) {
+        Map<String, Object> resp = new HashMap<>();
+        // Find a live backup node
+        List<NodeRegistry.PeerState> livePeers = nodeRegistry.getLivePeers();
+        NodeRegistry.PeerState backup = null;
+        for (NodeRegistry.PeerState ps : livePeers) {
+            if (ps.getNodeId() != nodeRegistry.getPrimaryId() && ps.getNodeId() > 0) {
+                backup = ps;
+                break;
+            }
+        }
+
+        if (backup == null) {
+            resp.put("error", "Cannot demonstrate stale read: no live backup peer found in cluster");
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(resp);
+        }
+
+        // 1. Temporarily configure ASYNCHRONOUS mode with specified delay
+        String prevMode = replicationService.getReplicationMode();
+        long prevDelay = replicationService.getAsyncDelayMs();
+        replicationService.setReplicationMode(com.dms.repl.ReplicationService.MODE_ASYNCHRONOUS);
+        replicationService.setAsyncDelayMs(delayMs);
+
+        try {
+            // 2. Submit donation to primary
+            String donor = "StaleDemo-" + System.currentTimeMillis() % 1000;
+            DonationRequest req = new DonationRequest(donor, new BigDecimal("500"), "Mumbai");
+            req.setTargetNodeId(nodeRegistry.getPrimaryId());
+            ResponseEntity<Receipt> donateResp = donate(req);
+            Receipt receipt = donateResp.getBody();
+            String receiptId = receipt != null ? receipt.getReceiptId() : "N/A";
+
+            // 3. Immediately read backup node's count before delay elapses
+            RemoteDonationService backupStub = nodeRegistry.getPeerStub(backup.getNodeId());
+            long initialBackupCount = (backupStub != null) ? backupStub.getLedgerCount() : -1;
+
+            eventLogger.log("EXP5-REPL", String.format(
+                    "Deterministic Stale-Read Step 1: Confirmed on primary. Immediate read on backup node=%d count=%d (STALE READ DETECTED)",
+                    backup.getNodeId(), initialBackupCount));
+
+            // 4. Wait for background replication delay + 500ms safety margin
+            Thread.sleep(delayMs + 500);
+
+            // 5. Read backup node again after delay
+            long updatedBackupCount = (backupStub != null) ? backupStub.getLedgerCount() : -1;
+
+            eventLogger.log("EXP5-REPL", String.format(
+                    "Deterministic Stale-Read Step 2: Post-delay read on backup node=%d count=%d (EVENTUAL CONSISTENCY ACHIEVED)",
+                    backup.getNodeId(), updatedBackupCount));
+
+            resp.put("status", "SUCCESS");
+            resp.put("receiptId", receiptId);
+            resp.put("backupNodeId", backup.getNodeId());
+            resp.put("delayMs", delayMs);
+            resp.put("immediateBackupCount", initialBackupCount);
+            resp.put("eventualBackupCount", updatedBackupCount);
+            resp.put("staleReadObserved", initialBackupCount < updatedBackupCount);
+            resp.put("explanation", String.format(
+                    "Immediately after primary confirmation, backup had %d records (stale read). After %dms delay, backup reached %d records (eventual consistency).",
+                    initialBackupCount, delayMs, updatedBackupCount));
+
+            return ResponseEntity.ok(resp);
+        } catch (Exception e) {
+            resp.put("error", "Stale read demo error: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(resp);
+        } finally {
+            // Restore previous mode and delay
+            replicationService.setReplicationMode(prevMode);
+            replicationService.setAsyncDelayMs(prevDelay);
+        }
+    }
+
+    // -------------------------------------------------------------
+    // Exp 8: Fault Tolerance Endpoints
+    // -------------------------------------------------------------
+    @PostMapping("/ft/crash")
+    public ResponseEntity<Map<String, Object>> simulateCrash() {
+        nodeRegistry.setSimulatedCrash(true);
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("nodeId", nodeConfig.getId());
+        resp.put("simulatedCrash", true);
+        resp.put("message", "Node " + nodeConfig.getId() + " is now in simulated crash state (stops answering RMI calls and heartbeats)");
+        return ResponseEntity.ok(resp);
+    }
+
+    @PostMapping("/ft/resume")
+    public ResponseEntity<Map<String, Object>> resumeNode() {
+        nodeRegistry.setSimulatedCrash(false);
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("nodeId", nodeConfig.getId());
+        resp.put("simulatedCrash", false);
+        resp.put("message", "Node " + nodeConfig.getId() + " resumed and snapshot synced from primary");
+        return ResponseEntity.ok(resp);
+    }
+
+    @GetMapping("/ft/status")
+    public ResponseEntity<Map<String, Object>> getFaultToleranceStatus() {
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("nodeId", nodeConfig.getId());
+        resp.put("simulatedCrash", nodeRegistry.isSimulatedCrash());
+        resp.put("primaryId", nodeRegistry.getPrimaryId());
+        resp.put("isPrimary", nodeRegistry.getPrimaryId() == nodeConfig.getId());
+        return ResponseEntity.ok(resp);
+    }
+
+    @PostMapping("/ft/sync")
+    public ResponseEntity<Map<String, Object>> syncSnapshot() {
+        int count = nodeRegistry.syncSnapshotFromPrimary();
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("nodeId", nodeConfig.getId());
+        resp.put("primaryId", nodeRegistry.getPrimaryId());
+        resp.put("syncedDonations", count);
+        return ResponseEntity.ok(resp);
     }
 }

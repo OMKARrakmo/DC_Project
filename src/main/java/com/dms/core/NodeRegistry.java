@@ -20,6 +20,7 @@ public class NodeRegistry {
 
     private final AtomicInteger activeConnections = new AtomicInteger(0);
     private final AtomicInteger primaryId = new AtomicInteger(1);
+    private final java.util.concurrent.atomic.AtomicBoolean simulatedCrash = new java.util.concurrent.atomic.AtomicBoolean(false);
 
     // Map of nodeId -> PeerState
     private final Map<Integer, PeerState> peersById = new ConcurrentHashMap<>();
@@ -27,6 +28,8 @@ public class NodeRegistry {
     private final Map<String, PeerState> peersByAddr = new ConcurrentHashMap<>();
 
     private EventLogger eventLogger;
+    private com.dms.election.BullyElection bullyElection;
+    private DonationRepository donationRepository;
 
     public static class PeerState {
         private final String host;
@@ -81,6 +84,80 @@ public class NodeRegistry {
 
     public void setEventLogger(EventLogger eventLogger) {
         this.eventLogger = eventLogger;
+    }
+
+    public void setBullyElection(com.dms.election.BullyElection bullyElection) {
+        this.bullyElection = bullyElection;
+    }
+
+    public void setDonationRepository(DonationRepository donationRepository) {
+        this.donationRepository = donationRepository;
+    }
+
+    public boolean isSimulatedCrash() {
+        return simulatedCrash.get();
+    }
+
+    public void setSimulatedCrash(boolean crash) {
+        simulatedCrash.set(crash);
+        long ts = lamportClock.tick();
+        if (crash) {
+            if (eventLogger != null) {
+                eventLogger.logWithLamport("EXP8-FT", ts,
+                        "SIMULATED CRASH activated: node stopped answering RMI calls and heartbeats");
+            }
+        } else {
+            if (eventLogger != null) {
+                eventLogger.logWithLamport("EXP8-FT", ts,
+                        "SIMULATED CRASH cleared: node resumed normal operation, initiating rejoin snapshot");
+            }
+            syncSnapshotFromPrimary();
+        }
+    }
+
+    public List<PeerState> getKnownPeers() {
+        return new ArrayList<>(peersByAddr.values());
+    }
+
+    public int syncSnapshotFromPrimary() {
+        int pId = primaryId.get();
+        if (pId == nodeConfig.getId() || pId <= 0) return 0;
+        try {
+            RemoteDonationService stub = getPeerStub(pId);
+            if (stub != null) {
+                List<Donation> snapshot = stub.snapshot();
+                if (snapshot != null && donationRepository != null) {
+                    donationRepository.deleteAll();
+                    List<Donation> toSave = new ArrayList<>();
+                    for (Donation d : snapshot) {
+                        toSave.add(new Donation(
+                                null,
+                                d.getDonor(),
+                                d.getAmount(),
+                                d.getBranch(),
+                                d.getLamportTs(),
+                                d.getReceiptId(),
+                                d.getHandledBy(),
+                                d.getStatus(),
+                                d.getSeq(),
+                                d.isIsolated()
+                        ));
+                    }
+                    donationRepository.saveAll(toSave);
+                    if (eventLogger != null) {
+                        eventLogger.log("EXP8-FT", String.format(
+                                "Rejoined cluster: synchronized full snapshot (%d donations) from primary node=%d",
+                                snapshot.size(), pId));
+                    }
+                    return snapshot.size();
+                }
+            }
+        } catch (Exception e) {
+            if (eventLogger != null) {
+                eventLogger.log("EXP8-FT", "Snapshot sync failed: " + e.getMessage());
+            }
+        }
+        return 0;
     }
 
     public int getPrimaryId() {
@@ -192,6 +269,10 @@ public class NodeRegistry {
      */
     @Scheduled(fixedDelay = 2000, initialDelay = 2000)
     public void heartbeat() {
+        if (simulatedCrash.get()) {
+            return;
+        }
+
         long now = System.currentTimeMillis();
 
         for (PeerState ps : peersByAddr.values()) {
@@ -224,28 +305,24 @@ public class NodeRegistry {
                 ps.setStub(null);
                 if (ps.isAlive() && (now - ps.getLastSeen() > 6000)) {
                     ps.setAlive(false);
+                    int deadId = ps.getNodeId();
                     if (eventLogger != null) {
-                        eventLogger.log("EXP8-FT", String.format("Peer %s:%d suspected DEAD (heartbeat timeout > 6s)",
-                                ps.getHost(), ps.getRmiPort()));
+                        eventLogger.log("EXP8-FT", String.format("Peer node=%d (%s:%d) detected DEAD (heartbeat timeout > 6s)",
+                                deadId, ps.getHost(), ps.getRmiPort()));
+                    }
+
+                    // Check if the dead node was the current primary
+                    if (deadId == primaryId.get()) {
+                        if (eventLogger != null) {
+                            eventLogger.log("EXP8-FT", String.format(
+                                    "PRIMARY node=%d failed! Initiating Bully election failover...", deadId));
+                        }
+                        if (bullyElection != null) {
+                            bullyElection.startElection();
+                        }
                     }
                 }
             }
         }
-
-        updateCoordinatorForP1();
-    }
-
-    /**
-     * For P1: coordinator is highest alive node id (self or alive peers).
-     * (Formal Bully/Ring election is added in P3/P5).
-     */
-    private void updateCoordinatorForP1() {
-        int maxId = nodeConfig.getId();
-        for (PeerState ps : peersById.values()) {
-            if (ps.isAlive() && ps.getNodeId() > maxId) {
-                maxId = ps.getNodeId();
-            }
-        }
-        primaryId.set(maxId);
     }
 }

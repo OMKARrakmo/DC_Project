@@ -34,4 +34,8 @@ public interface RemoteDonationService extends Remote {
     Map<String, BigDecimal> mapPhase(List<Integer> liveSortedIds) throws RemoteException;
 
     List<Donation> snapshot() throws RemoteException;
+
+    String getLedgerHash() throws RemoteException;
+
+    long getLedgerCount() throws RemoteException;
 }
