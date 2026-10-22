@@ -28,7 +28,7 @@
     <button class="tab-btn active" data-tab="tab-cluster">Cluster Topology</button>
     <button class="tab-btn" data-tab="tab-exp1">Exp 1: Java RMI</button>
     <button class="tab-btn" data-tab="tab-exp6">Exp 6: Load Balancing</button>
-    <button class="tab-btn" data-tab="tab-exp4">Exp 4: Bully Election</button>
+    <button class="tab-btn" data-tab="tab-exp4">Exp 4: Election (Bully/Ring)</button>
     <button class="tab-btn" data-tab="tab-exp5">Exp 5: Replication</button>
     <button class="tab-btn" data-tab="tab-exp8">Exp 8: Fault Tolerance</button>
     <button class="tab-btn" data-tab="tab-exp2">Exp 2: Multithreading</button>
@@ -290,7 +290,7 @@
       <div class="card">
         <div class="card-header">
           <div>
-            <h2 class="card-title">Bully Election Algorithm (Exp 4)</h2>
+            <h2 class="card-title">Bully &amp; Ring Election Algorithms (Exp 4)</h2>
             <div class="card-desc">Coordinator election among active nodes: node with highest ID bullies smaller IDs and assumes Primary leadership</div>
           </div>
           <button class="btn-primary" id="btn-trigger-election">Trigger Bully Election</button>
