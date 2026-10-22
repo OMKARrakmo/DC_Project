@@ -61,6 +61,35 @@
     - Check (3): Primary process kill -> heartbeat timeout (>6s) -> Bully election failover to Node 2 -> post-failover write confirmed -> pre-kill confirmed donation intact in ledger.
     - Gate 2 MET.
 
+- **P4: Multithreading (Exp 2), Clock Synchronization (Exp 3), Distributed MapReduce (Exp 7)** [COMPLETED]
+  - Implemented Multithreading (`ThreadPoolService`):
+    - Configurable `ThreadPoolExecutor` with named worker threads (`dms-worker-%d`).
+    - Dynamic pool resizing (`setCorePoolSize`) and metrics reporting (core size, active threads, queue length, completed tasks).
+    - Task burst runner (`runBurst`) returning per-task worker thread assignments and latency.
+    - Race condition demonstration (`runRaceDemo`) using `CyclicBarrier` and brief context switch delays on an unprotected counter, demonstrating lost updates under concurrency vs 100% exact increments using `AtomicInteger`.
+  - Implemented Clock Synchronization (`ClockSyncService`):
+    - Lamport logical clock integration with virtual process physical clock (`System.currentTimeMillis() + artificialSkew + physicalClockOffset`).
+    - Adhered strictly to the Operating System Protection Rule: the host OS clock is never altered.
+    - Berkeley physical clock synchronization algorithm (`runBerkeleySync`): coordinator collects clock readings from all active nodes via RMI (`clockMillis()`), computes the cluster average, and dispatches relative $\Delta_i$ offsets via RMI (`applyOffset()`).
+    - Artificial skew injection (`setArtificialSkew`) and clock reset endpoints.
+  - Implemented Distributed MapReduce (`MapReduceService`):
+    - Pure Java distributed MapReduce calculation of "total donation per branch" over the non-isolated ledger.
+    - Deterministic sharding formula: donation belongs to a node if `donationId % liveCount == indexOf(node in sorted live ids)` (using `Math.floorMod`).
+    - Map Phase: runs on every live node over its assigned shard via RMI `mapPhase()`.
+    - Shuffle Phase: groups intermediate shard totals by branch.
+    - Reduce Phase: coordinator aggregates grouped branch totals.
+    - Primary SQL Verification: coordinator queries direct SQL SUM (`donationRepository.sumByBranch()`) on Primary and verifies 100% equality against MapReduce totals.
+  - Web UI Dashboard Updates:
+    - Enabled Exp 2 (Multithreading), Exp 3 (Clocks), and Exp 7 (MapReduce) tabs.
+    - Added ThreadPool telemetry gauges, resize controls, burst task generator, and race demo comparison display.
+    - Added Lamport & virtual physical clock gauges, skew injector, and Berkeley synchronization results table.
+    - Added MapReduce shard breakdown table, phase outputs (Map & Shuffle), and MapReduce vs Primary SQL verification comparison table.
+    - Added `EXP2-THREAD` and `EXP7-MR` filters to live log stream.
+  - Automated Testing:
+    - Created `MultithreadingAndClockAndMapReduceTest`: 5 unit tests validating thread naming, burst execution, race demo lost updates, virtual clock skew/offset math, single-node Berkeley sync, and MapReduce SQL SUM verification.
+    - Created `test-p4-e2e.ps1`, `test-p4-e2e.bat`, and `test-p4-e2e.sh`: executes Checks (1)-(4) end-to-end on a live 3-node cluster.
+    - Gate 3 MET.
+
 ## Tests Passing
 - `com.dms.DmsApplicationTests`: Spring Boot context initialization passed.
 - `com.dms.LoadBalancerTest`:
@@ -78,10 +107,18 @@
   - `testLedgerHashConsistency`: Passed (SHA-256 deterministic 64-char hex hash).
   - `testSimulatedCrashRejectsRmiCalls`: Passed.
   - `testReplicatePreservesSequenceAndReceipt`: Passed.
-- `test-p3-e2e.bat` / `test-p3-e2e.ps1` (3 local nodes on ports 8080, 8081, 8082):
+- `com.dms.MultithreadingAndClockAndMapReduceTest`:
+  - `testThreadPoolNamingAndBurstExecution`: Passed (`dms-worker-*` named threads, latency tracking).
+  - `testRaceConditionDemoLostUpdates`: Passed (lost updates observed on unsafe counter; AtomicInteger exact).
+  - `testVirtualClockSkewAndOffsetCalculations`: Passed (virtual time = system + skew + offset).
+  - `testBerkeleySyncSingleNodeCoordinator`: Passed (computes average and relative offsets).
+  - `testMapReduceMatchesSqlSum`: Passed (pure Java MapReduce matches SQL SUM exactly across all branches).
+- `test-p4-e2e.bat` / `test-p4-e2e.ps1` (3 local nodes on ports 8080, 8081, 8082):
   - Check 1 (Cross-node RMI routing) Passed.
   - Check 2 (Synchronous replication consistency) Passed.
-  - Check 3 (Primary process kill, Bully election failover, and pre-kill confirmed donation persistence) Passed.
+  - Exp 2 & Exp 3 (ThreadPool burst, race demo, Berkeley clock sync) Passed.
+  - Check 3 (Primary process kill, Bully election failover to Node 2, post-failover write confirmed, pre-kill donation intact) Passed.
+  - Check 4 (Distributed MapReduce == Primary SQL SUM 100% verified across all live shards) Passed.
 - `test-p2-load-balancer.bat`:
   - Regression re-run passed (Round Robin 4, 4, 4; Least Connections 4, 4, 4).
 - `smoke-two-machine.bat --local`:
@@ -97,9 +134,13 @@
 7. **Receipt Tracking**: Added `receiptId` getter and populated constructor to `Receipt` to allow client-side tracking and assertion of individual donation receipts without altering mandatory fixed contract fields.
 8. **Deterministic Stale-Read Demo**: Implemented dedicated endpoint `POST /api/repl/stale-read-demo` and UI action demonstrating step 1 (immediate read on backup - stale data observed) and step 2 (post-delay read - eventual consistency achieved).
 9. **Primary Process Kill**: Used TCP port binding process lookup in PowerShell to cleanly terminate the JVM process running the primary node, accurately testing heartbeat timeout (>6s) and Bully election failover.
+10. **OS Clock Protection Rule**: Process clock virtualization (`virtualMillis = systemMillis + artificialSkew + physicalClockOffset`) ensures Java process never mutates or requires OS-level physical clock changes.
+11. **FloorMod for Sharding**: Used `Math.floorMod(dId, liveCount)` instead of `%` to prevent negative indices if negative donation IDs or hashes were ever encountered.
+12. **Reproducible Race Conditions**: Synchronized worker threads at a `CyclicBarrier` followed by a 2ms sleep to reliably force thread context switches and reproduce lost updates under concurrent read-modify-write patterns.
+13. **Flexible HTTP Parameter Parsing**: In `ApiController`, parsed request payload via `HttpServletRequest` and Jackson fallback so endpoints transparently accept either JSON request bodies or URL query parameters without throwing HTTP 415.
 
 ## Known Bugs
 None.
 
 ## Exact Next Step
-Phase P4: Exps 2, 3, 7 (multithreading, thread pool burst, barrier race demo; Clocks with Lamport and Berkeley-style skew correction; MapReduce with sharding and SQL verification; check 4 in end-to-end script).
+Phase P5: Exps 9, 10 (MPI-style collectives and parallel matrix multiplication).

@@ -31,9 +31,9 @@
     <button class="tab-btn" data-tab="tab-exp4">Exp 4: Bully Election</button>
     <button class="tab-btn" data-tab="tab-exp5">Exp 5: Replication</button>
     <button class="tab-btn" data-tab="tab-exp8">Exp 8: Fault Tolerance</button>
-    <button class="tab-btn disabled" title="Unlocks in Phase 4">Exp 2: Multithreading (P4)</button>
-    <button class="tab-btn disabled" title="Unlocks in Phase 4">Exp 3: Clocks (P4)</button>
-    <button class="tab-btn disabled" title="Unlocks in Phase 4">Exp 7: MapReduce (P4)</button>
+    <button class="tab-btn" data-tab="tab-exp2">Exp 2: Multithreading</button>
+    <button class="tab-btn" data-tab="tab-exp3">Exp 3: Clocks</button>
+    <button class="tab-btn" data-tab="tab-exp7">Exp 7: MapReduce</button>
     <button class="tab-btn disabled" title="Unlocks in Phase 5">Exp 9: MPI Collectives (P5)</button>
     <button class="tab-btn disabled" title="Unlocks in Phase 5">Exp 10: Matrix Mult (P5)</button>
   </nav>
@@ -497,6 +497,282 @@
       </div>
     </section>
 
+    <!-- EXP 2: MULTITHREADING TAB -->
+    <section id="tab-exp2" class="tab-pane">
+      <div class="grid-2">
+        <!-- ThreadPool Configuration & Burst -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">ThreadPoolExecutor & Task Burst (Exp 2)</h2>
+              <div class="card-desc">Local worker pool processing concurrent requests with named worker threads</div>
+            </div>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 1rem;">
+            <!-- Pool Status Cards -->
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 0.5rem;">
+              <div class="card" style="margin: 0; padding: 0.75rem; background: #0f172a; text-align: center;">
+                <div style="font-size: 0.75rem; color: var(--text-muted);">Core Pool</div>
+                <div style="font-size: 1.25rem; font-weight: 700; color: var(--accent-blue);" id="tp-core-size">4</div>
+              </div>
+              <div class="card" style="margin: 0; padding: 0.75rem; background: #0f172a; text-align: center;">
+                <div style="font-size: 0.75rem; color: var(--text-muted);">Active Threads</div>
+                <div style="font-size: 1.25rem; font-weight: 700; color: var(--accent-green);" id="tp-active-count">0</div>
+              </div>
+              <div class="card" style="margin: 0; padding: 0.75rem; background: #0f172a; text-align: center;">
+                <div style="font-size: 0.75rem; color: var(--text-muted);">Queue Size</div>
+                <div style="font-size: 1.25rem; font-weight: 700; color: var(--accent-amber);" id="tp-queue-size">0</div>
+              </div>
+              <div class="card" style="margin: 0; padding: 0.75rem; background: #0f172a; text-align: center;">
+                <div style="font-size: 0.75rem; color: var(--text-muted);">Completed</div>
+                <div style="font-size: 1.25rem; font-weight: 700; color: var(--text-main);" id="tp-completed-count">0</div>
+              </div>
+            </div>
+
+            <!-- Pool Resize Form -->
+            <div style="display: flex; gap: 0.5rem; align-items: flex-end;">
+              <div class="form-group" style="flex: 1;">
+                <label for="input-pool-size">Configure Core Pool Size</label>
+                <input type="number" id="input-pool-size" min="1" max="32" value="4">
+              </div>
+              <button class="btn-primary" id="btn-set-pool-size">Update Pool Size</button>
+            </div>
+
+            <!-- Burst Generator -->
+            <div style="border-top: 1px solid rgba(255,255,255,0.08); padding-top: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem;">
+              <label>Run Burst of Isolated Donations</label>
+              <div style="display: flex; gap: 0.5rem; align-items: center;">
+                <input type="number" id="input-tp-burst-count" min="1" max="50" value="8" style="width: 100px;" title="Task count">
+                <input type="number" id="input-tp-burst-delay" min="0" max="2000" step="50" value="150" style="width: 120px;" title="Delay (ms)">
+                <button class="btn-primary" id="btn-run-tp-burst">Burst Tasks</button>
+              </div>
+              <div style="font-size: 0.75rem; color: var(--text-muted);">Tasks are assigned to worker threads <code>dms-worker-%d</code>.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Race Condition Demo -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Race Condition Demonstration</h2>
+              <div class="card-desc">CyclicBarrier read-sleep-write race vs AtomicInteger synchronized updates</div>
+            </div>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 1rem;">
+            <div class="alert-box alert-amber" style="font-size: 0.8rem;">
+              <strong>Race Demo Mechanism:</strong>
+              N threads synchronize at a <code>CyclicBarrier</code>. Each thread reads the shared counter, sleeps for 2ms, and writes back <code>count + 1</code>. Without synchronization, concurrent writes overwrite each other, resulting in lost updates. The safe counter uses <code>AtomicInteger</code> to guarantee atomic increments.
+            </div>
+
+            <div style="display: flex; gap: 0.75rem; align-items: flex-end;">
+              <div class="form-group" style="flex: 1;">
+                <label for="input-race-threads">Threads (N)</label>
+                <input type="number" id="input-race-threads" min="2" max="20" value="10">
+              </div>
+              <div class="form-group" style="flex: 1;">
+                <label for="input-race-increments">Increments per Thread (M)</label>
+                <input type="number" id="input-race-increments" min="5" max="50" value="10">
+              </div>
+              <button class="btn-primary" id="btn-run-race-demo" style="background:#e11d48;">Run Race Demo</button>
+            </div>
+
+            <div id="race-demo-results" style="display: none; padding: 0.75rem; background: #0f172a; border-radius: 4px; border: 1px solid var(--border-color);">
+              <!-- Rendered via JS -->
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Task Results Table -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">Worker Thread Task Log</h2>
+            <div class="card-desc">Shows thread execution assignments (Task #, Thread Name, Latency, Timestamp)</div>
+          </div>
+          <button class="btn-secondary" id="btn-clear-tp-results">Clear Results</button>
+        </div>
+        <table class="data-table" id="tp-results-table">
+          <thead>
+            <tr>
+              <th>Task #</th>
+              <th>Assigned Worker Thread</th>
+              <th>Task Latency</th>
+              <th>Completion Timestamp</th>
+            </tr>
+          </thead>
+          <tbody id="tp-results-tbody">
+            <tr><td colspan="4" style="text-align:center;">No burst tasks submitted yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- EXP 3: CLOCKS TAB -->
+    <section id="tab-exp3" class="tab-pane">
+      <div class="grid-2">
+        <!-- Logical & Physical Clocks Card -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Logical & Physical Clocks (Exp 3)</h2>
+              <div class="card-desc">Lamport logical clock + Berkeley physical clock synchronization algorithm</div>
+            </div>
+            <button class="btn-secondary" id="btn-refresh-clock">Refresh Status</button>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 1rem;">
+            <!-- Clock Gauges -->
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 0.5rem;">
+              <div class="card" style="margin: 0; padding: 0.75rem; background: #0f172a; text-align: center;">
+                <div style="font-size: 0.75rem; color: var(--text-muted);">Lamport Clock</div>
+                <div style="font-size: 1.25rem; font-weight: 700; color: var(--accent-amber);" id="clock-lamport-val">0</div>
+              </div>
+              <div class="card" style="margin: 0; padding: 0.75rem; background: #0f172a; text-align: center;">
+                <div style="font-size: 0.75rem; color: var(--text-muted);">Artificial Skew</div>
+                <div style="font-size: 1.25rem; font-weight: 700; color: var(--accent-blue);" id="clock-skew-val">+0 ms</div>
+              </div>
+              <div class="card" style="margin: 0; padding: 0.75rem; background: #0f172a; text-align: center;">
+                <div style="font-size: 0.75rem; color: var(--text-muted);">Applied Offset</div>
+                <div style="font-size: 1.25rem; font-weight: 700; color: var(--accent-green);" id="clock-offset-val">+0 ms</div>
+              </div>
+            </div>
+
+            <!-- Virtual Clock Display -->
+            <div style="padding: 0.75rem 1rem; background: #0f172a; border-radius: 4px; border: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <div style="font-size: 0.75rem; color: var(--text-muted);">Node Virtual Physical Time:</div>
+                <div style="font-family: var(--font-mono); font-size: 1rem; font-weight: 700; color: var(--accent-blue);" id="clock-virtual-time">0 ms</div>
+              </div>
+              <div style="text-align: right;">
+                <div style="font-size: 0.75rem; color: var(--text-muted);">System OS Time:</div>
+                <div style="font-family: var(--font-mono); font-size: 0.85rem; color: var(--text-muted);" id="clock-system-time">0 ms</div>
+              </div>
+            </div>
+
+            <!-- Skew Configuration -->
+            <div style="display: flex; gap: 0.5rem; align-items: flex-end;">
+              <div class="form-group" style="flex: 1;">
+                <label for="input-clock-skew">Inject Artificial Clock Skew (ms)</label>
+                <input type="number" id="input-clock-skew" step="500" value="3000" placeholder="+/- ms">
+              </div>
+              <button class="btn-primary" id="btn-set-clock-skew">Set Skew</button>
+              <button class="btn-secondary" id="btn-reset-clock">Reset</button>
+            </div>
+
+            <div class="alert-box">
+              <strong>Operating System Protection Rule:</strong> The host operating system clock is NEVER modified. All Berkeley offsets and skews adjust virtual process clock times deterministically.
+            </div>
+          </div>
+        </div>
+
+        <!-- Berkeley Synchronization Action -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Berkeley Algorithm Synchronization</h2>
+              <div class="card-desc">Coordinator polls node clocks, computes average, and dispatches offsets</div>
+            </div>
+            <button class="btn-primary" id="btn-run-berkeley">Run Berkeley Sync</button>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 1rem;">
+            <div id="berkeley-summary-box" style="padding: 0.75rem 1rem; background: #0f172a; border-radius: 4px; border: 1px solid var(--border-color); display: none;">
+              <!-- Rendered via JS -->
+            </div>
+
+            <table class="data-table" id="berkeley-table">
+              <thead>
+                <tr>
+                  <th>Node ID</th>
+                  <th>Clock Before (ms)</th>
+                  <th>Applied Offset</th>
+                  <th>Clock After (ms)</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="berkeley-tbody">
+                <tr><td colspan="5" style="text-align:center;">Click "Run Berkeley Sync" to synchronize cluster clocks.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- EXP 7: MAPREDUCE TAB -->
+    <section id="tab-exp7" class="tab-pane">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">Distributed MapReduce: Total Donation per Branch (Exp 7)</h2>
+            <div class="card-desc">Pure Java distributed MapReduce with deterministic ledger sharding and Primary SQL SUM verification</div>
+          </div>
+          <button class="btn-primary" id="btn-run-mr">Execute MapReduce Job</button>
+        </div>
+
+        <div class="alert-box" style="font-size: 0.85rem;">
+          <strong>MapReduce Sharding Contract:</strong> A non-isolated donation belongs to a node if <code>donationId % liveCount == indexOf(node in sorted live ids)</code>. The Map phase runs on every live node over its shard; Shuffle groups by branch; Reduce runs on Coordinator; results are verified against a direct SQL SUM on Primary.
+        </div>
+
+        <!-- Shard Allocation Breakdown -->
+        <div style="margin-top: 0.5rem;">
+          <h3 style="font-size: 0.9rem; color: var(--accent-blue); margin-bottom: 0.5rem;">Cluster Shard Breakdown</h3>
+          <table class="data-table" id="mr-shards-table">
+            <thead>
+              <tr>
+                <th>Node ID</th>
+                <th>Shard Index</th>
+                <th>Sharding Formula</th>
+                <th>Assigned Donation Count</th>
+                <th>Shard Total</th>
+              </tr>
+            </thead>
+            <tbody id="mr-shards-tbody">
+              <tr><td colspan="5" style="text-align:center;">Loading cluster shards...</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Verification Result Banner -->
+        <div id="mr-verification-banner" style="display: none; padding: 0.85rem 1.15rem; border-radius: 4px; font-size: 0.9rem;">
+          <!-- Rendered via JS -->
+        </div>
+
+        <!-- Map, Shuffle, Reduce, and SQL Comparison Tables -->
+        <div class="grid-2" style="margin-top: 0.5rem;">
+          <!-- Map & Shuffle Output -->
+          <div class="card" style="margin: 0; background: #0f172a; border-color: rgba(255,255,255,0.06);">
+            <h3 style="font-size: 0.9rem; color: var(--accent-blue);">Map & Shuffle Phase Output</h3>
+            <div id="mr-map-output" style="font-family: var(--font-mono); font-size: 0.8rem; margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.5rem;">
+              No MapReduce job run yet.
+            </div>
+          </div>
+
+          <!-- Reduce vs SQL Table -->
+          <div class="card" style="margin: 0; background: #0f172a; border-color: rgba(255,255,255,0.06);">
+            <h3 style="font-size: 0.9rem; color: var(--accent-blue);">Reduce vs Primary SQL Verification</h3>
+            <table class="data-table" id="mr-verification-table" style="margin-top: 0.5rem;">
+              <thead>
+                <tr>
+                  <th>Branch</th>
+                  <th>MapReduce Result</th>
+                  <th>Primary SQL SUM</th>
+                  <th>Verification</th>
+                </tr>
+              </thead>
+              <tbody id="mr-verification-tbody">
+                <tr><td colspan="4" style="text-align:center;">Run job to compare MapReduce vs SQL SUM.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- LIVE EVENT LOG (VISIBLE ON ALL TABS) -->
     <section class="event-log-container">
       <div class="log-header">
@@ -507,12 +783,14 @@
         <div class="log-controls">
           <select id="log-filter-tag" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;">
             <option value="ALL">All Tags</option>
-            <option value="EXP6-LB">EXP6-LB</option>
             <option value="EXP1-RMI">EXP1-RMI</option>
-            <option value="EXP8-FT">EXP8-FT</option>
+            <option value="EXP2-THREAD">EXP2-THREAD</option>
             <option value="EXP3-CLOCK">EXP3-CLOCK</option>
             <option value="EXP4-ELECT">EXP4-ELECT</option>
             <option value="EXP5-REPL">EXP5-REPL</option>
+            <option value="EXP6-LB">EXP6-LB</option>
+            <option value="EXP7-MR">EXP7-MR</option>
+            <option value="EXP8-FT">EXP8-FT</option>
           </select>
           <label style="font-size:0.75rem; display:flex; align-items:center; gap:0.25rem;">
             <input type="checkbox" id="log-autoscroll" checked> Auto-scroll

@@ -24,6 +24,9 @@ public class ApiController {
     private final com.dms.lb.LoadBalancingService loadBalancingService;
     private final com.dms.election.BullyElection bullyElection;
     private final com.dms.repl.ReplicationService replicationService;
+    private final ThreadPoolService threadPoolService;
+    private final ClockSyncService clockSyncService;
+    private final com.dms.mr.MapReduceService mapReduceService;
 
     public ApiController(NodeConfig nodeConfig,
                          NodeRegistry nodeRegistry,
@@ -33,7 +36,10 @@ public class ApiController {
                          DonationRepository donationRepository,
                          com.dms.lb.LoadBalancingService loadBalancingService,
                          @org.springframework.context.annotation.Lazy com.dms.election.BullyElection bullyElection,
-                         com.dms.repl.ReplicationService replicationService) {
+                         com.dms.repl.ReplicationService replicationService,
+                         ThreadPoolService threadPoolService,
+                         ClockSyncService clockSyncService,
+                         com.dms.mr.MapReduceService mapReduceService) {
         this.nodeConfig = nodeConfig;
         this.nodeRegistry = nodeRegistry;
         this.lamportClock = lamportClock;
@@ -43,6 +49,9 @@ public class ApiController {
         this.loadBalancingService = loadBalancingService;
         this.bullyElection = bullyElection;
         this.replicationService = replicationService;
+        this.threadPoolService = threadPoolService;
+        this.clockSyncService = clockSyncService;
+        this.mapReduceService = mapReduceService;
     }
 
     @PostMapping("/donate")
@@ -496,5 +505,140 @@ public class ApiController {
         resp.put("primaryId", nodeRegistry.getPrimaryId());
         resp.put("syncedDonations", count);
         return ResponseEntity.ok(resp);
+    }
+
+    // -------------------------------------------------------------
+    // Exp 2: Multithreading Endpoints
+    // -------------------------------------------------------------
+    @GetMapping("/threads/status")
+    public ResponseEntity<Map<String, Object>> getThreadStatus() {
+        return ResponseEntity.ok(threadPoolService.getStatus());
+    }
+
+    @PostMapping("/threads/pool-size")
+    public ResponseEntity<Map<String, Object>> setThreadPoolSize(
+            @RequestParam(required = false) Integer size,
+            jakarta.servlet.http.HttpServletRequest request) {
+        Integer targetSize = size;
+        try {
+            if (request.getContentType() != null && request.getContentType().contains("application/json")) {
+                Map<?, ?> body = new com.fasterxml.jackson.databind.ObjectMapper().readValue(request.getInputStream(), Map.class);
+                if (body != null && body.containsKey("size")) {
+                    Object val = body.get("size");
+                    if (val instanceof Number) targetSize = ((Number) val).intValue();
+                    else if (val != null) targetSize = Integer.parseInt(val.toString());
+                }
+            }
+        } catch (Exception ignored) {}
+        if (targetSize != null) {
+            threadPoolService.setPoolSize(targetSize);
+        }
+        return ResponseEntity.ok(threadPoolService.getStatus());
+    }
+
+    @PostMapping("/threads/burst")
+    public ResponseEntity<List<ThreadPoolService.TaskResult>> runThreadBurst(
+            @RequestParam(required = false, defaultValue = "8") Integer count,
+            @RequestParam(required = false, defaultValue = "150") Integer delayMs,
+            jakarta.servlet.http.HttpServletRequest request) {
+        int cnt = count != null ? count : 8;
+        int dly = delayMs != null ? delayMs : 150;
+        try {
+            if (request.getContentType() != null && request.getContentType().contains("application/json")) {
+                Map<?, ?> body = new com.fasterxml.jackson.databind.ObjectMapper().readValue(request.getInputStream(), Map.class);
+                if (body != null) {
+                    if (body.containsKey("count")) {
+                        Object val = body.get("count");
+                        if (val instanceof Number) cnt = ((Number) val).intValue();
+                    }
+                    if (body.containsKey("delayMs")) {
+                        Object val = body.get("delayMs");
+                        if (val instanceof Number) dly = ((Number) val).intValue();
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+        return ResponseEntity.ok(threadPoolService.runBurst(cnt, dly));
+    }
+
+    @PostMapping("/threads/race-demo")
+    public ResponseEntity<Map<String, Object>> runRaceDemo(
+            @RequestParam(required = false, defaultValue = "10") Integer threads,
+            @RequestParam(required = false, defaultValue = "10") Integer increments,
+            jakarta.servlet.http.HttpServletRequest request) {
+        int th = threads != null ? threads : 10;
+        int inc = increments != null ? increments : 10;
+        try {
+            if (request.getContentType() != null && request.getContentType().contains("application/json")) {
+                Map<?, ?> body = new com.fasterxml.jackson.databind.ObjectMapper().readValue(request.getInputStream(), Map.class);
+                if (body != null) {
+                    if (body.containsKey("threads")) {
+                        Object val = body.get("threads");
+                        if (val instanceof Number) th = ((Number) val).intValue();
+                    }
+                    if (body.containsKey("incrementsPerThread")) {
+                        Object val = body.get("incrementsPerThread");
+                        if (val instanceof Number) inc = ((Number) val).intValue();
+                    } else if (body.containsKey("increments")) {
+                        Object val = body.get("increments");
+                        if (val instanceof Number) inc = ((Number) val).intValue();
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+        return ResponseEntity.ok(threadPoolService.runRaceDemo(th, inc));
+    }
+
+    // -------------------------------------------------------------
+    // Exp 3: Physical & Logical Clock Endpoints
+    // -------------------------------------------------------------
+    @GetMapping("/clock/status")
+    public ResponseEntity<Map<String, Object>> getClockStatus() {
+        return ResponseEntity.ok(clockSyncService.getStatus());
+    }
+
+    @PostMapping("/clock/skew")
+    public ResponseEntity<Map<String, Object>> setClockSkew(
+            @RequestParam(required = false) Long skewMs,
+            jakarta.servlet.http.HttpServletRequest request) {
+        Long targetSkew = skewMs;
+        try {
+            if (request.getContentType() != null && request.getContentType().contains("application/json")) {
+                Map<?, ?> body = new com.fasterxml.jackson.databind.ObjectMapper().readValue(request.getInputStream(), Map.class);
+                if (body != null && body.containsKey("skewMs")) {
+                    Object val = body.get("skewMs");
+                    if (val instanceof Number) targetSkew = ((Number) val).longValue();
+                    else if (val != null) targetSkew = Long.parseLong(val.toString());
+                }
+            }
+        } catch (Exception ignored) {}
+        if (targetSkew != null) {
+            clockSyncService.setArtificialSkewMs(targetSkew);
+        }
+        return ResponseEntity.ok(clockSyncService.getStatus());
+    }
+
+    @PostMapping("/clock/berkeley-sync")
+    public ResponseEntity<Map<String, Object>> runBerkeleySync() {
+        return ResponseEntity.ok(clockSyncService.runBerkeleySync());
+    }
+
+    @PostMapping("/clock/reset")
+    public ResponseEntity<Map<String, Object>> resetClock() {
+        clockSyncService.resetClock();
+        return ResponseEntity.ok(clockSyncService.getStatus());
+    }
+
+    // -------------------------------------------------------------
+    // Exp 7: MapReduce Endpoints
+    // -------------------------------------------------------------
+    @PostMapping("/mr/run")
+    public ResponseEntity<Map<String, Object>> runMapReduceJob() {
+        return ResponseEntity.ok(mapReduceService.runMapReduceJob());
+    }
+
+    @GetMapping("/mr/shards")
+    public ResponseEntity<List<Map<String, Object>>> getMapReduceShards() {
+        return ResponseEntity.ok(mapReduceService.getShardBreakdown());
     }
 }

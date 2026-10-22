@@ -23,6 +23,8 @@ public class RemoteDonationServiceImpl implements RemoteDonationService {
     private final LoadBalancingService loadBalancingService;
     private final ReplicationService replicationService;
     private final BullyElection bullyElection;
+    private final ClockSyncService clockSyncService;
+    private final com.dms.mr.MapReduceService mapReduceService;
 
     private final AtomicLong nextSeq = new AtomicLong(0);
 
@@ -35,7 +37,9 @@ public class RemoteDonationServiceImpl implements RemoteDonationService {
                                     DonationRepository donationRepository,
                                     LoadBalancingService loadBalancingService,
                                     ReplicationService replicationService,
-                                    @Lazy BullyElection bullyElection) {
+                                    @Lazy BullyElection bullyElection,
+                                    ClockSyncService clockSyncService,
+                                    @Lazy com.dms.mr.MapReduceService mapReduceService) {
         this.nodeConfig = nodeConfig;
         this.nodeRegistry = nodeRegistry;
         this.lamportClock = lamportClock;
@@ -44,6 +48,8 @@ public class RemoteDonationServiceImpl implements RemoteDonationService {
         this.loadBalancingService = loadBalancingService;
         this.replicationService = replicationService;
         this.bullyElection = bullyElection;
+        this.clockSyncService = clockSyncService;
+        this.mapReduceService = mapReduceService;
 
         this.nodeRegistry.setEventLogger(eventLogger);
         this.nodeRegistry.setBullyElection(bullyElection);
@@ -306,27 +312,19 @@ public class RemoteDonationServiceImpl implements RemoteDonationService {
     @Override
     public long clockMillis() throws RemoteException {
         checkCrash();
-        return System.currentTimeMillis();
+        return clockSyncService.getVirtualClockMillis();
     }
 
     @Override
     public void applyOffset(long millis) throws RemoteException {
         checkCrash();
-        lamportClock.tick();
-        eventLogger.log("EXP3-CLOCK", "Applied clock offset=" + millis + "ms");
+        clockSyncService.applyOffset(millis);
     }
 
     @Override
     public Map<String, BigDecimal> mapPhase(List<Integer> liveSortedIds) throws RemoteException {
         checkCrash();
-        long ts = lamportClock.tick();
-        eventLogger.logWithLamport("EXP7-MR", ts, "MapPhase invoked with live nodes=" + liveSortedIds);
-        Map<String, BigDecimal> result = new HashMap<>();
-        for (String b : List.of("Mumbai", "Pune", "Chennai")) {
-            BigDecimal sum = donationRepository.sumByBranch(b);
-            result.put(b, sum != null ? sum : BigDecimal.ZERO);
-        }
-        return result;
+        return mapReduceService.mapShard(liveSortedIds);
     }
 
     @Override

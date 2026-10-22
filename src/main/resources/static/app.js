@@ -13,6 +13,9 @@ document.addEventListener("DOMContentLoaded", () => {
   fetchElectionStatus();
   fetchReplConfig();
   fetchFtStatus();
+  fetchThreadStatus();
+  fetchClockStatus();
+  fetchMapReduceShards();
 
   // Periodic refresh
   setInterval(fetchCluster, 3000);
@@ -20,6 +23,9 @@ document.addEventListener("DOMContentLoaded", () => {
   setInterval(fetchLbConfig, 2000);
   setInterval(fetchElectionStatus, 3000);
   setInterval(fetchFtStatus, 3000);
+  setInterval(fetchThreadStatus, 3000);
+  setInterval(fetchClockStatus, 3000);
+  setInterval(fetchMapReduceShards, 5000);
 
   // Event Listeners
   document.getElementById("btn-refresh-cluster").addEventListener("click", fetchCluster);
@@ -72,6 +78,30 @@ document.addEventListener("DOMContentLoaded", () => {
   if (btnFtManualSync) btnFtManualSync.addEventListener("click", handleManualSnapshotSync);
   const btnRefreshFt = document.getElementById("btn-refresh-ft");
   if (btnRefreshFt) btnRefreshFt.addEventListener("click", fetchFtStatus);
+
+  // Exp 2 Multithreading Listeners
+  const btnSetPoolSize = document.getElementById("btn-set-pool-size");
+  if (btnSetPoolSize) btnSetPoolSize.addEventListener("click", handleSetPoolSize);
+  const btnRunTpBurst = document.getElementById("btn-run-tp-burst");
+  if (btnRunTpBurst) btnRunTpBurst.addEventListener("click", handleRunThreadBurst);
+  const btnRunRace = document.getElementById("btn-run-race-demo");
+  if (btnRunRace) btnRunRace.addEventListener("click", handleRunRaceDemo);
+  const btnClearTp = document.getElementById("btn-clear-tp-results");
+  if (btnClearTp) btnClearTp.addEventListener("click", clearTpResults);
+
+  // Exp 3 Clocks Listeners
+  const btnRefreshClock = document.getElementById("btn-refresh-clock");
+  if (btnRefreshClock) btnRefreshClock.addEventListener("click", fetchClockStatus);
+  const btnSetSkew = document.getElementById("btn-set-clock-skew");
+  if (btnSetSkew) btnSetSkew.addEventListener("click", handleSetClockSkew);
+  const btnResetClock = document.getElementById("btn-reset-clock");
+  if (btnResetClock) btnResetClock.addEventListener("click", handleResetClock);
+  const btnRunBerkeley = document.getElementById("btn-run-berkeley");
+  if (btnRunBerkeley) btnRunBerkeley.addEventListener("click", handleRunBerkeleySync);
+
+  // Exp 7 MapReduce Listeners
+  const btnRunMr = document.getElementById("btn-run-mr");
+  if (btnRunMr) btnRunMr.addEventListener("click", handleRunMapReduceJob);
 });
 
 // TAB NAVIGATION
@@ -882,3 +912,434 @@ async function handleManualSnapshotSync() {
     btn.disabled = false;
   }
 }
+
+// =============================================================
+// EXP 2: MULTITHREADING (ThreadPoolExecutor & Race Demo)
+// =============================================================
+
+async function fetchThreadStatus() {
+  try {
+    const res = await fetch("/api/threads/status");
+    if (!res.ok) return;
+    const data = await res.json();
+
+    const coreElem = document.getElementById("tp-core-size");
+    const activeElem = document.getElementById("tp-active-count");
+    const queueElem = document.getElementById("tp-queue-size");
+    const compElem = document.getElementById("tp-completed-count");
+
+    if (coreElem) coreElem.textContent = data.corePoolSize;
+    if (activeElem) activeElem.textContent = data.activeCount;
+    if (queueElem) queueElem.textContent = data.queueSize;
+    if (compElem) compElem.textContent = data.completedTaskCount;
+
+    const inputPool = document.getElementById("input-pool-size");
+    if (inputPool && !inputPool.matches(":focus") && data.corePoolSize !== undefined) {
+      inputPool.value = data.corePoolSize;
+    }
+  } catch (err) {
+    console.error("Failed to fetch thread status", err);
+  }
+}
+
+async function handleSetPoolSize() {
+  const input = document.getElementById("input-pool-size");
+  const size = parseInt(input.value, 10);
+  if (isNaN(size) || size < 1) {
+    alert("Please enter a valid pool size >= 1");
+    return;
+  }
+
+  const btn = document.getElementById("btn-set-pool-size");
+  btn.disabled = true;
+  try {
+    const res = await fetch("/api/threads/pool-size", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ size })
+    });
+    if (!res.ok) throw new Error("Status " + res.status);
+    fetchThreadStatus();
+  } catch (err) {
+    alert("Failed to update thread pool size: " + err.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function handleRunThreadBurst() {
+  const countInput = document.getElementById("input-tp-burst-count");
+  const delayInput = document.getElementById("input-tp-burst-delay");
+  const count = parseInt(countInput.value, 10) || 8;
+  const delayMs = parseInt(delayInput.value, 10) || 150;
+
+  const btn = document.getElementById("btn-run-tp-burst");
+  btn.disabled = true;
+  btn.textContent = `Processing ${count} tasks...`;
+
+  try {
+    const res = await fetch("/api/threads/burst", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ count, delayMs })
+    });
+    const results = await res.json();
+
+    const tbody = document.getElementById("tp-results-tbody");
+    tbody.innerHTML = "";
+
+    if (!results || results.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;">No task results returned.</td></tr>`;
+      return;
+    }
+
+    results.forEach(r => {
+      const tr = document.createElement("tr");
+      const timeStr = r.timestamp ? new Date(r.timestamp).toLocaleTimeString() : "N/A";
+      tr.innerHTML = `
+        <td><strong>#${r.taskIndex}</strong></td>
+        <td><code>${escapeHtml(r.threadName)}</code></td>
+        <td>${r.latencyMs} ms</td>
+        <td style="color:var(--text-muted); font-size:0.8rem;">${timeStr}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    fetchThreadStatus();
+  } catch (err) {
+    alert("Thread burst error: " + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Burst Tasks";
+  }
+}
+
+function clearTpResults() {
+  const tbody = document.getElementById("tp-results-tbody");
+  if (tbody) {
+    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;">No burst tasks submitted yet.</td></tr>`;
+  }
+}
+
+async function handleRunRaceDemo() {
+  const threadsInput = document.getElementById("input-race-threads");
+  const incInput = document.getElementById("input-race-increments");
+  const threads = parseInt(threadsInput.value, 10) || 10;
+  const incrementsPerThread = parseInt(incInput.value, 10) || 10;
+
+  const btn = document.getElementById("btn-run-race-demo");
+  const resultsBox = document.getElementById("race-demo-results");
+  btn.disabled = true;
+  btn.textContent = "Simulating Race Condition...";
+  resultsBox.style.display = "block";
+  resultsBox.innerHTML = `<div style="color:var(--accent-amber);">Synchronizing threads at CyclicBarrier and executing concurrent read-sleep-write cycles...</div>`;
+
+  try {
+    const res = await fetch("/api/threads/race-demo", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ threads, incrementsPerThread })
+    });
+    const data = await res.json();
+
+    const hasLostUpdates = data.unsafeLostUpdates > 0;
+    resultsBox.innerHTML = `
+      <div style="display:flex; flex-direction:column; gap:0.6rem;">
+        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:0.4rem;">
+          <span style="font-weight:700; color:var(--text-main);">Theoretical Expected Count:</span>
+          <span style="font-family:var(--font-mono); font-size:1.1rem; font-weight:700; color:var(--accent-blue);">
+            ${data.threads} threads &times; ${data.incrementsPerThread} inc = ${data.expected}
+          </span>
+        </div>
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:0.75rem;">
+          <div style="padding:0.6rem; background:#1e293b; border-radius:4px; border:1px solid ${hasLostUpdates ? 'var(--accent-red)' : 'var(--border-color)'};">
+            <div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:0.2rem;">Unsafe Counter (Read-Sleep-Write):</div>
+            <div style="display:flex; align-items:baseline; justify-content:space-between;">
+              <span style="font-size:1.25rem; font-weight:700; color:var(--accent-red); font-family:var(--font-mono);">${data.unsafeActual}</span>
+              <span class="badge badge-red">${data.unsafeLostUpdates} LOST UPDATES</span>
+            </div>
+            <div style="font-size:0.7rem; color:#f87171; margin-top:0.3rem;">
+              Context switches during sleep caused concurrent threads to overwrite each other.
+            </div>
+          </div>
+
+          <div style="padding:0.6rem; background:#1e293b; border-radius:4px; border:1px solid var(--accent-green);">
+            <div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:0.2rem;">Safe Counter (AtomicInteger):</div>
+            <div style="display:flex; align-items:baseline; justify-content:space-between;">
+              <span style="font-size:1.25rem; font-weight:700; color:var(--accent-green); font-family:var(--font-mono);">${data.safeActual}</span>
+              <span class="badge badge-green">0 LOST (EXACT)</span>
+            </div>
+            <div style="font-size:0.7rem; color:#4ade80; margin-top:0.3rem;">
+              Hardware-level CAS (Compare-And-Swap) prevents lost updates.
+            </div>
+          </div>
+        </div>
+
+        <div style="font-size:0.75rem; color:var(--text-muted); line-height:1.4;">
+          <strong>Conclusion:</strong> In a multi-threaded server, unprotected shared mutations lose data silently under concurrency. Thread-safe atomic primitives or locks are mandatory.
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    resultsBox.innerHTML = `<div class="alert-box alert-red">Race demo error: ${escapeHtml(err.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Run Race Demo";
+  }
+}
+
+// =============================================================
+// EXP 3: CLOCKS (Lamport & Berkeley Physical Sync)
+// =============================================================
+
+async function fetchClockStatus() {
+  try {
+    const res = await fetch("/api/clock/status");
+    if (!res.ok) return;
+    const data = await res.json();
+
+    const lamportElem = document.getElementById("clock-lamport-val");
+    const skewElem = document.getElementById("clock-skew-val");
+    const offsetElem = document.getElementById("clock-offset-val");
+    const virtElem = document.getElementById("clock-virtual-time");
+    const sysElem = document.getElementById("clock-system-time");
+
+    if (lamportElem) lamportElem.textContent = data.lamportTime;
+    if (skewElem) skewElem.textContent = (data.artificialSkewMillis >= 0 ? "+" : "") + data.artificialSkewMillis + " ms";
+    if (offsetElem) offsetElem.textContent = (data.physicalClockOffsetMillis >= 0 ? "+" : "") + data.physicalClockOffsetMillis + " ms";
+    if (virtElem) virtElem.textContent = `${data.formattedVirtualTime} (${data.physicalVirtualMillis} ms)`;
+    if (sysElem) sysElem.textContent = `${data.formattedSystemTime} (${data.physicalSystemMillis} ms)`;
+  } catch (err) {
+    console.error("Failed to fetch clock status", err);
+  }
+}
+
+async function handleSetClockSkew() {
+  const input = document.getElementById("input-clock-skew");
+  const skewMs = parseInt(input.value, 10);
+  if (isNaN(skewMs)) {
+    alert("Please enter a valid skew in milliseconds");
+    return;
+  }
+
+  const btn = document.getElementById("btn-set-clock-skew");
+  btn.disabled = true;
+  try {
+    const res = await fetch("/api/clock/skew", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ skewMs })
+    });
+    if (!res.ok) throw new Error("Status " + res.status);
+    fetchClockStatus();
+  } catch (err) {
+    alert("Failed to inject clock skew: " + err.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function handleResetClock() {
+  const btn = document.getElementById("btn-reset-clock");
+  btn.disabled = true;
+  try {
+    const res = await fetch("/api/clock/reset", { method: "POST" });
+    if (!res.ok) throw new Error("Status " + res.status);
+    document.getElementById("input-clock-skew").value = 0;
+    fetchClockStatus();
+  } catch (err) {
+    alert("Failed to reset clock: " + err.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function handleRunBerkeleySync() {
+  const btn = document.getElementById("btn-run-berkeley");
+  btn.disabled = true;
+  btn.textContent = "Synchronizing Cluster Clocks...";
+
+  try {
+    const res = await fetch("/api/clock/berkeley-sync", { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) {
+      alert("Berkeley sync error: " + (data.error || "Execution failed"));
+      return;
+    }
+
+    const summaryBox = document.getElementById("berkeley-summary-box");
+    if (summaryBox) {
+      summaryBox.style.display = "block";
+      summaryBox.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <strong>Berkeley Sync Completed:</strong> Coordinator Node ${data.coordinatorId} queried ${data.liveNodeCount} live node clocks.
+          </div>
+          <div style="font-family:var(--font-mono); color:var(--accent-blue);">
+            Cluster Average: ${data.formattedAverageTime} (${data.averageClockMillis} ms)
+          </div>
+        </div>
+      `;
+    }
+
+    const tbody = document.getElementById("berkeley-tbody");
+    tbody.innerHTML = "";
+
+    (data.nodeClocks || []).forEach(node => {
+      const tr = document.createElement("tr");
+      const isCoord = node.nodeId === data.coordinatorId;
+      const offsetSign = node.relativeOffsetMillis >= 0 ? "+" : "";
+
+      tr.innerHTML = `
+        <td><strong>Node ${node.nodeId}</strong> ${isCoord ? '<span class="badge badge-primary">COORD</span>' : '<span class="badge">PEER</span>'}</td>
+        <td style="font-family:var(--font-mono);">${node.clockBeforeMillis} ms</td>
+        <td style="font-family:var(--font-mono); font-weight:700; color:${node.relativeOffsetMillis === 0 ? 'var(--text-muted)' : 'var(--accent-amber)'};">${offsetSign}${node.relativeOffsetMillis} ms</td>
+        <td style="font-family:var(--font-mono); font-weight:700; color:var(--accent-green);">${node.clockAfterMillis} ms</td>
+        <td><span class="badge badge-green">${escapeHtml(node.status)}</span></td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    fetchClockStatus();
+  } catch (err) {
+    alert("Berkeley sync failed: " + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Run Berkeley Sync";
+  }
+}
+
+// =============================================================
+// EXP 7: DISTRIBUTED MAPREDUCE (with SQL SUM Verification)
+// =============================================================
+
+async function fetchMapReduceShards() {
+  try {
+    const res = await fetch("/api/mr/shards");
+    if (!res.ok) return;
+    const shards = await res.json();
+
+    const tbody = document.getElementById("mr-shards-tbody");
+    if (!tbody) return;
+    tbody.innerHTML = "";
+
+    if (!shards || shards.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;">No live shards available.</td></tr>`;
+      return;
+    }
+
+    shards.forEach(s => {
+      const tr = document.createElement("tr");
+      const isSelf = localNode && s.nodeId === localNode.nodeId;
+      tr.innerHTML = `
+        <td><strong>Node ${s.nodeId}</strong> ${isSelf ? '<span class="badge" style="font-size:0.65rem;">SELF</span>' : ''}</td>
+        <td><span class="badge badge-primary">Shard ${s.shardIndex}</span></td>
+        <td><code>${escapeHtml(s.shardingFormula)}</code></td>
+        <td><strong>${s.assignedCount}</strong> donations</td>
+        <td style="font-family:var(--font-mono); color:var(--accent-green);">₹${Number(s.shardTotal).toFixed(2)}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  } catch (err) {
+    console.error("Failed to fetch MapReduce shards", err);
+  }
+}
+
+async function handleRunMapReduceJob() {
+  const btn = document.getElementById("btn-run-mr");
+  btn.disabled = true;
+  btn.textContent = "Executing Distributed MapReduce Job...";
+
+  try {
+    const res = await fetch("/api/mr/run", { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) {
+      alert("MapReduce error: " + (data.error || "Execution failed"));
+      return;
+    }
+
+    // 1. Verification banner
+    const banner = document.getElementById("mr-verification-banner");
+    if (banner) {
+      banner.style.display = "block";
+      if (data.verified) {
+        banner.className = "alert-box";
+        banner.style.background = "rgba(34, 197, 94, 0.12)";
+        banner.style.borderLeft = "4px solid var(--accent-green)";
+        banner.innerHTML = `
+          <strong style="color:var(--accent-green); font-size:1rem;">✓ MapReduce == SQL SUM Verified!</strong>
+          <div style="font-size:0.8rem; color:var(--text-muted); margin-top:0.25rem;">
+            Pure Java distributed MapReduce (across ${data.liveCount} live nodes) matched the Primary SQL SUM exactly across all branches!
+          </div>
+        `;
+      } else {
+        banner.className = "alert-box alert-red";
+        banner.innerHTML = `
+          <strong style="color:var(--accent-red); font-size:1rem;">⚠ Verification Mismatch!</strong>
+          <div style="font-size:0.8rem; color:#fca5a5; margin-top:0.25rem;">
+            Discrepancies found: ${escapeHtml((data.discrepancies || []).join("; "))}
+          </div>
+        `;
+      }
+    }
+
+    // 2. Map & Shuffle outputs
+    const mapOutputDiv = document.getElementById("mr-map-output");
+    if (mapOutputDiv) {
+      let html = `<div style="color:var(--text-muted); font-size:0.75rem; margin-bottom:0.3rem;">[Map Phase - Shard Totals Collected via RMI]</div>`;
+      for (const [nodeId, branchTotals] of Object.entries(data.mapOutputs || {})) {
+        html += `<div style="padding:0.35rem 0.5rem; background:#1e293b; border-radius:3px;">`;
+        html += `<strong style="color:var(--accent-blue);">Node ${nodeId} Shard:</strong> `;
+        const entries = Object.entries(branchTotals).map(([b, val]) => `${b}: ₹${Number(val).toFixed(2)}`);
+        html += entries.length > 0 ? entries.join("  |  ") : "0 donations";
+        html += `</div>`;
+      }
+
+      html += `<div style="color:var(--text-muted); font-size:0.75rem; margin:0.5rem 0 0.3rem 0;">[Shuffle Phase - Grouped By Key]</div>`;
+      for (const [branch, valList] of Object.entries(data.shuffleOutputs || {})) {
+        html += `<div style="padding:0.35rem 0.5rem; background:#1e293b; border-radius:3px;">`;
+        html += `<strong style="color:var(--accent-amber);">${escapeHtml(branch)}:</strong> [${valList.map(v => "₹" + Number(v).toFixed(2)).join(", ")}]`;
+        html += `</div>`;
+      }
+      mapOutputDiv.innerHTML = html;
+    }
+
+    // 3. Verification table
+    const tbody = document.getElementById("mr-verification-tbody");
+    tbody.innerHTML = "";
+
+    const allBranches = Array.from(new Set([
+      ...Object.keys(data.reduceOutputs || {}),
+      ...Object.keys(data.sqlSums || {})
+    ])).sort();
+
+    if (allBranches.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;">No donation records in ledger.</td></tr>`;
+    } else {
+      allBranches.forEach(branch => {
+        const mrVal = data.reduceOutputs && data.reduceOutputs[branch] !== undefined ? data.reduceOutputs[branch] : 0.0;
+        const sqlVal = data.sqlSums && data.sqlSums[branch] !== undefined ? data.sqlSums[branch] : 0.0;
+        const diff = Math.abs(mrVal - sqlVal);
+        const isMatch = diff < 0.001;
+
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td><span class="badge">${escapeHtml(branch)}</span></td>
+          <td style="font-family:var(--font-mono); font-weight:700;">₹${Number(mrVal).toFixed(2)}</td>
+          <td style="font-family:var(--font-mono); font-weight:700; color:var(--accent-blue);">₹${Number(sqlVal).toFixed(2)}</td>
+          <td>${isMatch ? '<span class="badge badge-green">MATCH (100%)</span>' : '<span class="badge badge-red">MISMATCH</span>'}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    fetchMapReduceShards();
+  } catch (err) {
+    alert("Failed to run MapReduce job: " + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Execute MapReduce Job";
+  }
+}
+
