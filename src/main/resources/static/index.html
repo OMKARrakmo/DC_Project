@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DMS - Distributed Donation Management System</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- HEADER -->
+  <header>
+    <div class="brand">
+      <h1>Distributed Donation Management System</h1>
+      <div class="sub">10 Distributed Systems Lab Experiments | Spring Boot + Java RMI</div>
+    </div>
+    <div class="node-badge-container">
+      <span class="badge badge-primary" id="hdr-node-id">Node: ...</span>
+      <span class="badge" id="hdr-node-host">Host: ...</span>
+      <span class="badge" id="hdr-node-os">OS: ...</span>
+      <span class="badge badge-amber" id="hdr-lamport">Lamport: 0</span>
+      <span class="badge badge-green" id="hdr-role">Role: ...</span>
+    </div>
+  </header>
+
+  <!-- NAVIGATION TABS -->
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="tab-cluster">Cluster Topology</button>
+    <button class="tab-btn" data-tab="tab-exp1">Exp 1: Java RMI</button>
+    <button class="tab-btn disabled" title="Unlocks in Phase 2">Exp 2: Multithreading (P4)</button>
+    <button class="tab-btn disabled" title="Unlocks in Phase 4">Exp 3: Clocks (P4)</button>
+    <button class="tab-btn disabled" title="Unlocks in Phase 3">Exp 4: Election (P3)</button>
+    <button class="tab-btn disabled" title="Unlocks in Phase 3">Exp 5: Replication (P3)</button>
+    <button class="tab-btn disabled" title="Unlocks in Phase 2">Exp 6: Load Balancing (P2)</button>
+    <button class="tab-btn disabled" title="Unlocks in Phase 4">Exp 7: MapReduce (P4)</button>
+    <button class="tab-btn disabled" title="Unlocks in Phase 3">Exp 8: Fault Tolerance (P3)</button>
+    <button class="tab-btn disabled" title="Unlocks in Phase 5">Exp 9: MPI Collectives (P5)</button>
+    <button class="tab-btn disabled" title="Unlocks in Phase 5">Exp 10: Matrix Mult (P5)</button>
+  </nav>
+
+  <!-- MAIN BODY -->
+  <main class="content">
+
+    <!-- CLUSTER TAB -->
+    <section id="tab-cluster" class="tab-pane active">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">Cluster Nodes & Status</h2>
+            <div class="card-desc">Peer detection via Java RMI heartbeats (every 2s, failure timeout 6s)</div>
+          </div>
+          <button class="btn-secondary" id="btn-refresh-cluster">Refresh</button>
+        </div>
+        <table class="data-table" id="cluster-table">
+          <thead>
+            <tr>
+              <th>Node ID</th>
+              <th>Host IP</th>
+              <th>HTTP Port</th>
+              <th>RMI Port</th>
+              <th>OS</th>
+              <th>Lamport TS</th>
+              <th>Active Conns</th>
+              <th>Role</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="cluster-tbody">
+            <tr><td colspan="9" style="text-align:center;">Loading cluster state...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- EXP 1: RMI TAB -->
+    <section id="tab-exp1" class="tab-pane">
+      <div class="grid-2">
+        <!-- Donor Client Form -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Donor Client (Submit Donation)</h2>
+              <div class="card-desc">Routes via Java RMI from Gateway to selected Processing Node</div>
+            </div>
+          </div>
+          <form id="form-donate">
+            <div class="form-group">
+              <label for="input-donor">Donor Name</label>
+              <input type="text" id="input-donor" required placeholder="e.g. Alice Smith" value="Alice Smith">
+            </div>
+            <div class="form-group">
+              <label for="input-amount">Amount (Min: 100)</label>
+              <input type="number" id="input-amount" min="100" step="10" required placeholder="500" value="500">
+            </div>
+            <div class="form-group">
+              <label for="select-branch">Branch</label>
+              <select id="select-branch">
+                <option value="Mumbai" selected>Mumbai</option>
+                <option value="Pune">Pune</option>
+                <option value="Chennai">Chennai</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="select-target-node">Target Processing Node (RMI)</label>
+              <select id="select-target-node">
+                <option value="">Local Node (Self)</option>
+              </select>
+            </div>
+            <button type="submit" class="btn-primary" id="btn-submit-donation">Submit Donation via RMI</button>
+          </form>
+
+          <!-- Result Trace -->
+          <div id="donate-result-box" style="display:none;" class="trace-box">
+            <div class="trace-path" id="donate-trace-path">Execution Trace: Gateway -> Processing Node</div>
+            <div class="receipt-grid">
+              <div class="receipt-item"><div class="lbl">Status</div><div class="val" id="rec-status">-</div></div>
+              <div class="receipt-item"><div class="lbl">Processed By</div><div class="val" id="rec-node">-</div></div>
+              <div class="receipt-item"><div class="lbl">Host IP</div><div class="val" id="rec-host">-</div></div>
+              <div class="receipt-item"><div class="lbl">Node OS</div><div class="val" id="rec-os">-</div></div>
+              <div class="receipt-item"><div class="lbl">Thread Name</div><div class="val" id="rec-thread">-</div></div>
+              <div class="receipt-item"><div class="lbl">Lamport TS</div><div class="val" id="rec-lamport">-</div></div>
+              <div class="receipt-item"><div class="lbl">Primary Node</div><div class="val" id="rec-primary">-</div></div>
+              <div class="receipt-item"><div class="lbl">Message</div><div class="val" id="rec-msg">-</div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- NGO Client Query -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">NGO Client (Branch Total Query)</h2>
+              <div class="card-desc">Queries branch total via RemoteDonationService.branchTotal()</div>
+            </div>
+          </div>
+          <form id="form-branch-query">
+            <div class="form-group">
+              <label for="query-branch">Branch</label>
+              <select id="query-branch">
+                <option value="Mumbai">Mumbai</option>
+                <option value="Pune">Pune</option>
+                <option value="Chennai">Chennai</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="query-target-node">Query Target Node (RMI)</label>
+              <select id="query-target-node">
+                <option value="">Local Node (Self)</option>
+              </select>
+            </div>
+            <button type="submit" class="btn-primary" id="btn-query-total">Query Total via RMI</button>
+          </form>
+
+          <div id="ngo-result-box" style="display:none;" class="trace-box">
+            <div class="trace-path" id="ngo-trace-path">Query Path: -</div>
+            <div style="font-size: 1.1rem; color: var(--accent-green); font-weight:700;" id="ngo-total-val">Total: 0.00</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Local Ledger Table -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">Local Node Ledger (H2 Database)</h2>
+            <div class="card-desc">Donations stored in this node's local database (file mode)</div>
+          </div>
+          <button class="btn-secondary" id="btn-refresh-ledger">Refresh Ledger</button>
+        </div>
+        <table class="data-table" id="ledger-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Donor</th>
+              <th>Amount</th>
+              <th>Branch</th>
+              <th>Lamport TS</th>
+              <th>Receipt ID</th>
+              <th>Handled By</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="ledger-tbody">
+            <tr><td colspan="8" style="text-align:center;">No records found.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- LIVE EVENT LOG (VISIBLE ON ALL TABS) -->
+    <section class="event-log-container">
+      <div class="log-header">
+        <div class="log-title">
+          <span class="log-pulse"></span>
+          <span>Live Cluster Event Log (Server-Sent Events)</span>
+        </div>
+        <div class="log-controls">
+          <select id="log-filter-tag" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;">
+            <option value="ALL">All Tags</option>
+            <option value="EXP1-RMI">EXP1-RMI</option>
+            <option value="EXP8-FT">EXP8-FT</option>
+            <option value="EXP3-CLOCK">EXP3-CLOCK</option>
+            <option value="EXP4-ELECT">EXP4-ELECT</option>
+            <option value="EXP5-REPL">EXP5-REPL</option>
+          </select>
+          <label style="font-size:0.75rem; display:flex; align-items:center; gap:0.25rem;">
+            <input type="checkbox" id="log-autoscroll" checked> Auto-scroll
+          </label>
+          <button class="btn-secondary" id="btn-clear-log" style="padding:0.2rem 0.5rem;">Clear</button>
+        </div>
+      </div>
+      <div class="log-window" id="log-window">
+        <!-- Event lines appended here -->
+      </div>
+    </section>
+
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
